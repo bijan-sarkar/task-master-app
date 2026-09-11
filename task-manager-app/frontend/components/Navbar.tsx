@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { CheckSquare, Calendar, Compass, User, LogOut, ShieldAlert, Sparkles, Mail, Phone, X } from 'lucide-react';
 import { loginOrCreateUser } from '@/lib/api';
 
-export default function Navbar() {
+export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {}) {
   const pathname = usePathname();
   const [activeUser, setActiveUser] = useState<any>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
