@@ -1,9 +1,9 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class UserBase(BaseModel):
-    email: EmailStr
+    email: str
     name: str
     phone_number: Optional[str] = None
     timezone: str = "Asia/Dhaka"
