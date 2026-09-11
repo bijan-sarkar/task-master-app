@@ -1,5 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://task-master-app-a9vt.onrender.com';
-
+const API_BASE = 'https://task-master-app-a9vt.onrender.com';
 export function getActiveUserId(): string {
   if (typeof window === 'undefined') return 'demo-user';
   try {
