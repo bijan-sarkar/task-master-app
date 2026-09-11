@@ -3,7 +3,6 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
-// AuthModal integrated in Navbar
 import { 
   CheckCircle2, 
   Clock, 
@@ -33,17 +32,23 @@ import {
 
 export default function Dashboard() {
   const [mounted, setMounted] = useState(false);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<any>({
+    total_tasks: 0,
+    completed_tasks: 0,
+    pending_tasks: 0,
+    overdue_tasks: 0,
+    weekly_completion_rate: 0,
+    today_tasks: [],
+    all_tasks: []
+  });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'all' | 'today' | 'pending' | 'completed' | 'high'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
 
-  // User State
   const [activeUser, setActiveUser] = useState<any>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Task Modal State
+  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<any | null>(null);
   const [taskForm, setTaskForm] = useState({
@@ -60,6 +65,21 @@ export default function Dashboard() {
     window.addEventListener('storage_user_updated', checkUserAndLoad);
     return () => window.removeEventListener('storage_user_updated', checkUserAndLoad);
   }, []);
+
+  function getLocalBackupTasks(): any[] {
+    try {
+      const stored = localStorage.getItem('taskmaster_local_tasks');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveLocalBackupTasks(tasks: any[]) {
+    try {
+      localStorage.setItem('taskmaster_local_tasks', JSON.stringify(tasks));
+    } catch (e) {}
+  }
 
   function checkUserAndLoad() {
     try {
@@ -79,9 +99,47 @@ export default function Dashboard() {
 
   async function loadData(userId?: string) {
     setLoading(true);
-    const res = await fetchDashboard(userId);
-    setData(res);
-    setLoading(false);
+    const localTasks = getLocalBackupTasks();
+
+    try {
+      const res = await fetchDashboard(userId);
+      const serverTasks = (res && res.all_tasks) ? res.all_tasks : [];
+      
+      const combined = [...localTasks];
+      for (const st of serverTasks) {
+        if (!combined.some(ct => ct.id === st.id)) {
+          combined.push(st);
+        }
+      }
+
+      const completed = combined.filter((t: any) => t.status === 'completed').length;
+      const total = combined.length;
+      const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+      setData({
+        total_tasks: total,
+        completed_tasks: completed,
+        pending_tasks: total - completed,
+        overdue_tasks: res?.overdue_tasks || 0,
+        weekly_completion_rate: rate,
+        today_tasks: combined,
+        all_tasks: combined
+      });
+    } catch (err) {
+      const completed = localTasks.filter((t: any) => t.status === 'completed').length;
+      const total = localTasks.length;
+      setData({
+        total_tasks: total,
+        completed_tasks: completed,
+        pending_tasks: total - completed,
+        overdue_tasks: 0,
+        weekly_completion_rate: total > 0 ? Math.round((completed / total) * 100) : 0,
+        today_tasks: localTasks,
+        all_tasks: localTasks
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   function openCreateModal() {
@@ -108,29 +166,111 @@ export default function Dashboard() {
     setIsModalOpen(true);
   }
 
-  async function handleSaveTask(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSaveTask(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     if (!taskForm.title.trim()) return;
 
+    const currentTitle = taskForm.title.trim();
+    const currentDesc = taskForm.description;
+    const currentMins = taskForm.estimated_minutes || 60;
+    const currentPrio = taskForm.priority || 'medium';
+    const currentStatus = taskForm.status || 'pending';
+
+    const tempId = editingTask ? editingTask.id : 'task-' + Date.now();
+    const newTaskObj = {
+      id: tempId,
+      title: currentTitle,
+      description: currentDesc,
+      estimated_minutes: currentMins,
+      priority: currentPrio,
+      status: currentStatus,
+      created_at: new Date().toISOString()
+    };
+
+    const existingLocal = getLocalBackupTasks();
+    let updatedLocal: any[];
+
     if (editingTask) {
-      await updateTask(editingTask.id, taskForm);
+      updatedLocal = existingLocal.map((t: any) => t.id === editingTask.id ? newTaskObj : t);
     } else {
-      await createNewTask(activeUser?.id || 'demo-user', taskForm);
+      updatedLocal = [newTaskObj, ...existingLocal];
     }
+
+    saveLocalBackupTasks(updatedLocal);
+
+    setData((prev: any) => {
+      const nextAll = editingTask 
+        ? (prev?.all_tasks || []).map((t: any) => t.id === editingTask.id ? newTaskObj : t)
+        : [newTaskObj, ...(prev?.all_tasks || [])];
+      const completed = nextAll.filter((t: any) => t.status === 'completed').length;
+      return {
+        ...prev,
+        total_tasks: nextAll.length,
+        pending_tasks: nextAll.length - completed,
+        weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
+        all_tasks: nextAll,
+        today_tasks: [newTaskObj, ...(prev?.today_tasks || [])]
+      };
+    });
+
     setIsModalOpen(false);
-    loadData(activeUser?.id);
+
+    try {
+      if (editingTask) {
+        await updateTask(editingTask.id, taskForm);
+      } else {
+        await createNewTask(activeUser?.id, taskForm);
+      }
+    } catch (err) {}
   }
 
   async function handleDeleteTask(taskId: string) {
     if (!confirm('Are you sure you want to delete this task?')) return;
-    await deleteTask(taskId);
-    loadData(activeUser?.id);
+    
+    const local = getLocalBackupTasks().filter((t: any) => t.id !== taskId);
+    saveLocalBackupTasks(local);
+
+    setData((prev: any) => {
+      const nextAll = (prev?.all_tasks || []).filter((t: any) => t.id !== taskId);
+      const completed = nextAll.filter((t: any) => t.status === 'completed').length;
+      return {
+        ...prev,
+        total_tasks: nextAll.length,
+        completed_tasks: completed,
+        pending_tasks: nextAll.length - completed,
+        weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
+        all_tasks: nextAll,
+        today_tasks: (prev?.today_tasks || []).filter((t: any) => t.id !== taskId)
+      };
+    });
+
+    try {
+      await deleteTask(taskId);
+    } catch (e) {}
   }
 
   async function handleToggleDone(taskId: string, currentStatus: string) {
     const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    await updateTaskStatus(taskId, nextStatus);
-    loadData(activeUser?.id);
+
+    const local = getLocalBackupTasks().map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t);
+    saveLocalBackupTasks(local);
+
+    setData((prev: any) => {
+      const nextAll = (prev?.all_tasks || []).map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t);
+      const completed = nextAll.filter((t: any) => t.status === 'completed').length;
+      return {
+        ...prev,
+        completed_tasks: completed,
+        pending_tasks: nextAll.length - completed,
+        weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
+        all_tasks: nextAll,
+        today_tasks: (prev?.today_tasks || []).map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t)
+      };
+    });
+
+    try {
+      await updateTaskStatus(taskId, nextStatus);
+    } catch (e) {}
   }
 
   async function handleAutoSchedule() {
@@ -166,10 +306,9 @@ export default function Dashboard() {
     );
   }
 
-  // Filter Tasks
   const allTasks = data?.all_tasks || data?.today_tasks || [];
   const filteredTasks = allTasks.filter((t: any) => {
-    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const matchesSearch = t.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
     if (!matchesSearch) return false;
 
@@ -187,7 +326,6 @@ export default function Dashboard() {
       <Navbar />
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Active User Prompt Banner (If logged out) */}
         {!activeUser && (
           <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -200,7 +338,7 @@ export default function Dashboard() {
               </p>
             </div>
             <button
-              onClick={() => window.dispatchEvent(new Event("open_auth_modal"))}
+              onClick={() => window.dispatchEvent(new Event('open_auth_modal'))}
               className="bg-white text-slate-900 hover:bg-slate-100 font-bold px-4 py-2.5 rounded-xl text-xs transition-colors shadow-sm whitespace-nowrap self-start sm:self-auto"
             >
               Sign In / Active User
@@ -208,7 +346,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Notification Status Banner */}
         {notificationStatus && (
           <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl flex items-center gap-2 text-sm font-medium animate-pulse shadow-sm">
             <Flame className="w-4 h-4 text-red-600 shrink-0" />
@@ -216,7 +353,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Hero Header with Actions */}
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -252,7 +388,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Progress Bar */}
           <div className="space-y-2">
             <div className="flex justify-between text-xs font-bold">
               <span className="text-slate-500 uppercase tracking-wider">Weekly Completion</span>
@@ -266,7 +401,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* KPI Cards Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
             <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
               <span className="text-xs text-slate-500 font-medium">Total Tasks</span>
@@ -287,7 +421,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Control Bar: Search & Filter Tabs */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
             {[
@@ -323,7 +456,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Task List Section */}
         <div className="space-y-3">
           {loading ? (
             <div className="p-8 text-center text-slate-400 text-xs">Refreshing tasks...</div>
@@ -368,7 +500,7 @@ export default function Dashboard() {
                             : 'border-slate-300 hover:border-slate-600 text-transparent'
                         }`}
                       >
-                        <Check className="w-4 h-4 stroke-[3]" />
+                        <Check className="w-4 h-4 stroke-" />
                       </button>
 
                       <div className="space-y-1.5 min-w-0">
@@ -449,7 +581,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Add / Edit Task Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
@@ -458,6 +589,7 @@ export default function Dashboard() {
                 {editingTask ? 'Edit Task' : 'Add New Task'}
               </h2>
               <button 
+                type="button"
                 onClick={() => setIsModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600 p-1"
               >
@@ -471,10 +603,10 @@ export default function Dashboard() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Solve Codeforces Dynamic Programming problem"
+                  placeholder="e.g. Solve 50 Codeforces problems"
                   value={taskForm.title}
                   onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
                 />
               </div>
 
@@ -485,7 +617,7 @@ export default function Dashboard() {
                   placeholder="Problem links, notes, expected approach..."
                   value={taskForm.description}
                   onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
                 />
               </div>
 
@@ -499,7 +631,7 @@ export default function Dashboard() {
                       step={5}
                       value={taskForm.estimated_minutes}
                       onChange={(e) => setTaskForm({ ...taskForm, estimated_minutes: Number(e.target.value) })}
-                      className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">
                       mins
@@ -512,7 +644,7 @@ export default function Dashboard() {
                   <select
                     value={taskForm.priority}
                     onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
-                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white"
+                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white text-slate-800"
                   >
                     <option value="low">Low Priority</option>
                     <option value="medium">Medium Priority</option>
@@ -527,7 +659,7 @@ export default function Dashboard() {
                   <select
                     value={taskForm.status}
                     onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}
-                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white"
+                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white text-slate-800"
                   >
                     <option value="pending">Pending</option>
                     <option value="in_progress">In Progress</option>
@@ -545,7 +677,8 @@ export default function Dashboard() {
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={() => handleSaveTask()}
                   className="px-5 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-colors shadow-sm"
                 >
                   {editingTask ? 'Save Changes' : 'Create Task'}
@@ -555,9 +688,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      {/* User Login Modal */}
-      
     </>
   );
 }
