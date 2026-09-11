@@ -3,8 +3,7 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
-// AuthModal integrated in Navbar
-import { Clock, Plus, Trash2, Save, Calendar, Sparkles } from 'lucide-react';
+import { Clock, Plus, Trash2, Save } from 'lucide-react';
 import { getActiveUserId } from '@/lib/api';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -12,7 +11,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://task-master-app-a9v
 
 export default function AvailabilityPage() {
   const [mounted, setMounted] = useState(false);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [slots, setSlots] = useState([
     { day_of_week: 0, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
     { day_of_week: 1, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
@@ -71,7 +69,7 @@ export default function AvailabilityPage() {
 
   return (
     <>
-      <Navbar onOpenAuth={() => setIsAuthOpen(true)} />
+      <Navbar />
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
@@ -145,8 +143,6 @@ export default function AvailabilityPage() {
           })}
         </div>
       </div>
-
-      
     </>
   );
 }
