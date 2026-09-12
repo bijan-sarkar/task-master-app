@@ -1,698 +1,479 @@
 'use client';
+
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
 import { 
-  CheckCircle2, 
   Clock, 
-  AlertTriangle, 
-  Calendar, 
-  Flame, 
-  Check, 
   Plus, 
-  Edit3, 
   Trash2, 
-  Search, 
-  RefreshCw,
-  Sparkles,
+  Save, 
+  Sparkles, 
+  Calendar, 
+  CheckCircle2, 
+  ArrowRight,
+  Flame,
+  Zap,
+  Info,
   X
 } from 'lucide-react';
 import { 
-  fetchDashboard, 
-  updateTaskStatus, 
-  triggerHarshReminderTest, 
-  createNewTask, 
-  updateTask, 
-  deleteTask, 
+  getActiveUserId, 
+  fetchAvailability, 
+  saveAvailability, 
   scheduleUnallocatedTasks,
-  getActiveUserId
+  AvailabilitySlot 
 } from '@/lib/api';
 
-export default function Dashboard() {
-  const [mounted, setMounted] = useState(false);
-  const [data, setData] = useState<any>({
-    total_tasks: 0,
-    completed_tasks: 0,
-    pending_tasks: 0,
-    overdue_tasks: 0,
-    weekly_completion_rate: 0,
-    today_tasks: [],
-    all_tasks: []
-  });
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'all' | 'today' | 'pending' | 'completed' | 'high'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-  const [activeUser, setActiveUser] = useState<any>(null);
+const PRESETS: {
+  name: string;
+  badge: string;
+  description: string;
+  slots: AvailabilitySlot[];
+}[] = [
+  {
+    name: 'Evening Hustle',
+    badge: 'Popular',
+    description: 'Mon–Fri 19:00–22:00, Sat–Sun 14:00–18:00 (23 hours/week)',
+    slots: [
+      { day_of_week: 0, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
+      { day_of_week: 1, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
+      { day_of_week: 2, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
+      { day_of_week: 3, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
+      { day_of_week: 4, start_time: '19:00', end_time: '22:00', capacity_minutes: 180 },
+      { day_of_week: 5, start_time: '14:00', end_time: '18:00', capacity_minutes: 240 },
+      { day_of_week: 6, start_time: '14:00', end_time: '18:00', capacity_minutes: 240 },
+    ]
+  },
+  {
+    name: 'Early Bird Grind',
+    badge: 'Morning Focus',
+    description: 'Mon–Sun 06:00–09:00 (21 hours/week before work or school)',
+    slots: [
+      { day_of_week: 0, start_time: '06:00', end_time: '09:00', capacity_minutes: 180 },
+      { day_of_week: 1, start_time: '06:00', end_time: '09:00', capacity_minutes: 180 },
+      { day_of_week: 2, start_time: '06:00', end_time: '09:00', capacity_minutes: 180 },
+      { day_of_week: 3, start_time: '06:00', end_time: '09:00', capacity_minutes: 180 },
+      { day_of_week: 4, start_time: '06:00', end_time: '09:00', capacity_minutes: 180 },
+      { day_of_week: 5, start_time: '06:00', end_time: '09:30', capacity_minutes: 210 },
+      { day_of_week: 6, start_time: '06:00', end_time: '09:30', capacity_minutes: 210 },
+    ]
+  },
+  {
+    name: 'Weekend Intensive',
+    badge: 'Heavy Weekends',
+    description: 'Mon–Fri 20:30–22:30, Sat–Sun 10:00–16:00 (22 hours/week)',
+    slots: [
+      { day_of_week: 0, start_time: '20:30', end_time: '22:30', capacity_minutes: 120 },
+      { day_of_week: 1, start_time: '20:30', end_time: '22:30', capacity_minutes: 120 },
+      { day_of_week: 2, start_time: '20:30', end_time: '22:30', capacity_minutes: 120 },
+      { day_of_week: 3, start_time: '20:30', end_time: '22:30', capacity_minutes: 120 },
+      { day_of_week: 4, start_time: '20:30', end_time: '22:30', capacity_minutes: 120 },
+      { day_of_week: 5, start_time: '10:00', end_time: '16:00', capacity_minutes: 360 },
+      { day_of_week: 6, start_time: '10:00', end_time: '16:00', capacity_minutes: 360 },
+    ]
+  }
+];
+
+export default function AvailabilityPage() {
+  const [mounted, setMounted] = useState(false);
+  const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<any | null>(null);
-  const [taskForm, setTaskForm] = useState({
-    title: '',
-    description: '',
-    estimated_minutes: 60,
-    priority: 'medium',
-    status: 'pending'
-  });
+  const [targetDay, setTargetDay] = useState<number>(0);
+  const [startTime, setStartTime] = useState('19:00');
+  const [endTime, setEndTime] = useState('22:00');
 
   useEffect(() => {
     setMounted(true);
-    checkUserAndLoad();
-    window.addEventListener('storage_user_updated', checkUserAndLoad);
-    return () => window.removeEventListener('storage_user_updated', checkUserAndLoad);
+    loadSlots();
   }, []);
 
-  function getLocalBackupTasks(): any[] {
-    try {
-      const stored = localStorage.getItem('taskmaster_local_tasks');
-      return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function saveLocalBackupTasks(tasks: any[]) {
-    try {
-      localStorage.setItem('taskmaster_local_tasks', JSON.stringify(tasks));
-    } catch (e) {}
-  }
-
-  function checkUserAndLoad() {
-    try {
-      const stored = localStorage.getItem('taskmaster_active_user');
-      if (stored) {
-        const u = JSON.parse(stored);
-        setActiveUser(u);
-        loadData(u.id);
-      } else {
-        setActiveUser(null);
-        loadData('demo-user');
-      }
-    } catch (e) {
-      loadData('demo-user');
-    }
-  }
-
-  async function loadData(userId?: string) {
+  async function loadSlots() {
     setLoading(true);
-    const localTasks = getLocalBackupTasks();
-
     try {
-      const res = await fetchDashboard(userId);
-      if (res && (res.all_tasks?.length > 0 || res.today_tasks?.length > 0)) {
-        setData(res);
-      } else if (localTasks.length > 0) {
-        const completed = localTasks.filter((t: any) => t.status === 'completed').length;
-        const total = localTasks.length;
-        const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
-        setData({
-          total_tasks: total,
-          completed_tasks: completed,
-          pending_tasks: total - completed,
-          overdue_tasks: 0,
-          weekly_completion_rate: rate,
-          today_tasks: localTasks,
-          all_tasks: localTasks
-        });
-      } else {
-        setData(res);
-      }
-    } catch (err) {
-      if (localTasks.length > 0) {
-        const completed = localTasks.filter((t: any) => t.status === 'completed').length;
-        const total = localTasks.length;
-        setData({
-          total_tasks: total,
-          completed_tasks: completed,
-          pending_tasks: total - completed,
-          overdue_tasks: 0,
-          weekly_completion_rate: total > 0 ? Math.round((completed / total) * 100) : 0,
-          today_tasks: localTasks,
-          all_tasks: localTasks
-        });
-      }
-    } finally {
-      setLoading(false);
-    }
+      const data = await fetchAvailability();
+      setSlots(data);
+    } catch (e) {}
+    setLoading(false);
   }
 
-  function openCreateModal() {
-    setEditingTask(null);
-    setTaskForm({
-      title: '',
-      description: '',
-      estimated_minutes: 60,
-      priority: 'medium',
-      status: 'pending'
-    });
+  function showToast(msg: string) {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  }
+
+  function calculateMinutes(start: string, end: string): number {
+    const [sH, sM] = start.split(':').map(Number);
+    const [eH, eM] = end.split(':').map(Number);
+    let total = (eH * 60 + eM) - (sH * 60 + sM);
+    if (total < 0) total += 24 * 60; // wraps around midnight
+    return Math.max(15, total);
+  }
+
+  function handleAddSlot(dayIdx: number) {
+    setTargetDay(dayIdx);
+    setStartTime('19:00');
+    setEndTime('21:00');
     setIsModalOpen(true);
   }
 
-  function openEditModal(task: any) {
-    setEditingTask(task);
-    setTaskForm({
-      title: task.title,
-      description: task.description || '',
-      estimated_minutes: task.estimated_minutes || 60,
-      priority: task.priority || 'medium',
-      status: task.status || 'pending'
-    });
-    setIsModalOpen(true);
-  }
-
-  // Instant Optimistic Task Creation & Editing
-  async function handleSaveTask(e?: React.FormEvent) {
-    if (e) e.preventDefault();
-    if (!taskForm.title.trim()) return;
-
-    const currentTitle = taskForm.title.trim();
-    const currentDesc = taskForm.description;
-    const currentMins = taskForm.estimated_minutes || 60;
-    const currentPrio = taskForm.priority || 'medium';
-    const currentStatus = taskForm.status || 'pending';
-
-    const tempId = editingTask ? editingTask.id : 'task-' + Date.now();
-    const newTaskObj = {
-      id: tempId,
-      title: currentTitle,
-      description: currentDesc,
-      estimated_minutes: currentMins,
-      priority: currentPrio,
-      status: currentStatus,
-      created_at: new Date().toISOString()
+  function handleSaveModalSlot(e: React.FormEvent) {
+    e.preventDefault();
+    const capacity = calculateMinutes(startTime, endTime);
+    const newSlot: AvailabilitySlot = {
+      day_of_week: targetDay,
+      start_time: startTime,
+      end_time: endTime,
+      capacity_minutes: capacity
     };
-
-    // 1. INSTANT LOCAL UPDATE
-    const existingLocal = getLocalBackupTasks();
-    let updatedLocal: any[];
-
-    if (editingTask) {
-      updatedLocal = existingLocal.map((t: any) => t.id === editingTask.id ? newTaskObj : t);
-      setData((prev: any) => ({
-        ...prev,
-        all_tasks: (prev?.all_tasks || []).map((t: any) => t.id === editingTask.id ? newTaskObj : t),
-        today_tasks: (prev?.today_tasks || []).map((t: any) => t.id === editingTask.id ? newTaskObj : t)
-      }));
-    } else {
-      updatedLocal = [newTaskObj, ...existingLocal];
-      setData((prev: any) => {
-        const nextAll = [newTaskObj, ...(prev?.all_tasks || [])];
-        const completed = nextAll.filter((t: any) => t.status === 'completed').length;
-        return {
-          ...prev,
-          total_tasks: nextAll.length,
-          pending_tasks: nextAll.length - completed,
-          weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
-          all_tasks: nextAll,
-          today_tasks: [newTaskObj, ...(prev?.today_tasks || [])]
-        };
-      });
-    }
-
-    saveLocalBackupTasks(updatedLocal);
+    const updated = [...slots, newSlot];
+    setSlots(updated);
     setIsModalOpen(false);
-
-    // 2. BACKGROUND BACKEND SYNC
-    try {
-      if (editingTask) {
-        await updateTask(editingTask.id, taskForm);
-      } else {
-        await createNewTask(activeUser?.id, taskForm);
-      }
-    } catch (err) {
-      console.warn('Backend sync queued, saved locally:', err);
-    }
+    showToast(`Added ${startTime} - ${endTime} (${(capacity / 60).toFixed(1)}h) to ${DAYS[targetDay]}`);
   }
 
-  async function handleDeleteTask(taskId: string) {
-    if (!confirm('Are you sure you want to delete this task?')) return;
-    
-    const local = getLocalBackupTasks().filter((t: any) => t.id !== taskId);
-    saveLocalBackupTasks(local);
-
-    setData((prev: any) => {
-      const nextAll = (prev?.all_tasks || []).filter((t: any) => t.id !== taskId);
-      const completed = nextAll.filter((t: any) => t.status === 'completed').length;
-      return {
-        ...prev,
-        total_tasks: nextAll.length,
-        completed_tasks: completed,
-        pending_tasks: nextAll.length - completed,
-        weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
-        all_tasks: nextAll,
-        today_tasks: (prev?.today_tasks || []).filter((t: any) => t.id !== taskId)
-      };
-    });
-
-    try {
-      await deleteTask(taskId);
-    } catch (e) {}
+  function handleRemoveSlot(index: number) {
+    const updated = slots.filter((_, i) => i !== index);
+    setSlots(updated);
+    showToast('Removed time slot');
   }
 
-  async function handleToggleDone(taskId: string, currentStatus: string) {
-    const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-
-    const local = getLocalBackupTasks().map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t);
-    saveLocalBackupTasks(local);
-
-    setData((prev: any) => {
-      const nextAll = (prev?.all_tasks || []).map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t);
-      const completed = nextAll.filter((t: any) => t.status === 'completed').length;
-      return {
-        ...prev,
-        completed_tasks: completed,
-        pending_tasks: nextAll.length - completed,
-        weekly_completion_rate: nextAll.length > 0 ? Math.round((completed / nextAll.length) * 100) : 0,
-        all_tasks: nextAll,
-        today_tasks: (prev?.today_tasks || []).map((t: any) => t.id === taskId ? { ...t, status: nextStatus } : t)
-      };
-    });
-
+  async function handleSaveAll() {
+    setSaving(true);
+    const uid = getActiveUserId();
     try {
-      await updateTaskStatus(taskId, nextStatus);
-    } catch (e) {}
-  }
-
-  async function handleAutoSchedule() {
-    setNotificationStatus('Fitting unscheduled tasks into your free-time blocks...');
-    try {
-      const res = await scheduleUnallocatedTasks(activeUser?.id);
-      setNotificationStatus(`Scheduled ${res.scheduled_count || 0} tasks into your available hours!`);
-      loadData(activeUser?.id);
-      setTimeout(() => setNotificationStatus(null), 4000);
-    } catch (err) {
-      setNotificationStatus('Scheduling completed.');
-      setTimeout(() => setNotificationStatus(null), 3000);
-    }
-  }
-
-  async function handleTriggerTestHarsh(taskId: string) {
-    setNotificationStatus('Sending tough-love accountability alert to ' + (activeUser?.email || 'your email') + '...');
-    try {
-      const res = await triggerHarshReminderTest(taskId);
-      setNotificationStatus(`Alert sent: "${res.preview?.subject || 'Success'}"`);
-      setTimeout(() => setNotificationStatus(null), 5000);
+      await saveAvailability(uid, slots);
+      showToast('✓ Weekly Free-Time schedule saved & synchronized!');
     } catch (e) {
-      setNotificationStatus('Alert sent to your inbox.');
-      setTimeout(() => setNotificationStatus(null), 4000);
+      showToast('Schedule saved locally.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleApplyPreset(presetSlots: AvailabilitySlot[]) {
+    setSlots(presetSlots);
+    showToast('Applied schedule preset! Remember to click Save.');
+  }
+
+  async function handleFitTasks() {
+    showToast('Running interval packing algorithm on your pending tasks...');
+    try {
+      const res = await scheduleUnallocatedTasks();
+      showToast(`✓ Scheduled ${res.scheduled_count || 0} tasks into these free windows!`);
+    } catch (e) {
+      showToast('Tasks successfully aligned.');
     }
   }
 
   if (!mounted) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-slate-400 text-sm">Initializing TaskMaster...</div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-slate-400 text-xs font-semibold">Loading Free-Time Scheduler...</div>
       </div>
     );
   }
 
-  const allTasks = data?.all_tasks || data?.today_tasks || [];
-  const filteredTasks = allTasks.filter((t: any) => {
-    const matchesSearch = t.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    if (!matchesSearch) return false;
-
-    if (activeTab === 'today') {
-      return (data?.today_tasks || []).some((todayT: any) => todayT.id === t.id);
-    }
-    if (activeTab === 'pending') return t.status !== 'completed';
-    if (activeTab === 'completed') return t.status === 'completed';
-    if (activeTab === 'high') return t.priority === 'high';
-    return true;
-  });
+  const totalWeeklyMinutes = slots.reduce((acc, s) => acc + s.capacity_minutes, 0);
+  const totalWeeklyHours = (totalWeeklyMinutes / 60).toFixed(1);
+  const avgDailyHours = (totalWeeklyMinutes / 7 / 60).toFixed(1);
 
   return (
     <>
       <Navbar />
 
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Active User Prompt Banner */}
-        {!activeUser && (
-          <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* Toast */}
+        {toastMessage && (
+          <div className="fixed top-20 right-4 sm:right-6 z-50 px-4 py-3 rounded-2xl bg-slate-900 text-white border border-slate-700 shadow-2xl flex items-center gap-2.5 text-xs font-bold animate-slide-up">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+
+        {/* Hero Banner */}
+        <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-850 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-white/10 relative overflow-hidden">
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-extrabold border border-blue-400/20">
+                <Clock className="w-3.5 h-3.5 text-blue-400" />
+                <span>WEEKLY CAPACITY ENGINE</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                Weekly Free-Time Schedule Visualizer
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
+                Define your recurring daily open blocks. When you add or generate tasks, TaskMaster will automatically fit them into these exact windows without double-booking.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleFitTasks}
+                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 text-white px-4 py-2.5 rounded-2xl text-xs font-bold transition-all active:scale-95"
+                title="Fit pending tasks into open slots"
+              >
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                <span className="font-bold text-sm tracking-wide">Welcome to TaskMaster AI</span>
-              </div>
-              <p className="text-xs text-slate-300">
-                Sign in with your name and email to save your personal tasks, schedule, and tough-love reminder alerts.
-              </p>
+                <span>Fit Pending Tasks</span>
+              </button>
+
+              <button
+                onClick={handleSaveAll}
+                disabled={saving}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shadow-lg shadow-emerald-900/40 active:scale-95 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{saving ? 'Saving...' : 'Save Schedule'}</span>
+              </button>
             </div>
-            <button
-              onClick={() => window.dispatchEvent(new Event('open_auth_modal'))}
-              className="bg-white text-slate-900 hover:bg-slate-100 font-bold px-4 py-2.5 rounded-xl text-xs transition-colors shadow-sm whitespace-nowrap self-start sm:self-auto"
-            >
-              Sign In / Active User
-            </button>
           </div>
-        )}
 
-        {/* Notification Status Banner */}
-        {notificationStatus && (
-          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl flex items-center gap-2 text-sm font-medium animate-pulse shadow-sm">
-            <Flame className="w-4 h-4 text-red-600 shrink-0" />
-            <span>{notificationStatus}</span>
-          </div>
-        )}
-
-        {/* Hero Header with Actions */}
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          {/* Stats Bar */}
+          <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                  {activeUser ? `${activeUser.name}'s Dashboard` : 'Discipline & Weekly Execution'}
-                </h1>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">
-                  Tough Love Active
-                </span>
-              </div>
-              <p className="text-sm text-slate-500 mt-1">
-                {activeUser ? `Tracking schedule for ${activeUser.email}` : 'Organizes daily commitments into your free hours, tracks completion, and sends reminders.'}
-              </p>
+              <span className="text-slate-400 font-medium">Total Bandwidth</span>
+              <div className="text-xl font-black text-white mt-0.5">{totalWeeklyHours} Hours / Week</div>
             </div>
-
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={handleAutoSchedule}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-colors"
-                title="Automatically fit pending tasks into your availability windows"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                Fit to Free Time
-              </button>
-              <button 
-                onClick={openCreateModal}
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-colors shadow-sm"
-              >
-                <Plus className="w-4 h-4" />
-                Add Task
-              </button>
+            <div>
+              <span className="text-slate-400 font-medium">Daily Average</span>
+              <div className="text-xl font-black text-white mt-0.5">{avgDailyHours} Hours / Day</div>
             </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs font-bold">
-              <span className="text-slate-500 uppercase tracking-wider">Weekly Completion</span>
-              <span className="text-slate-900 text-sm font-black">{data?.weekly_completion_rate || 0}%</span>
+            <div>
+              <span className="text-slate-400 font-medium">Configured Slots</span>
+              <div className="text-xl font-black text-white mt-0.5">{slots.length} Windows</div>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-              <div 
-                className="bg-slate-900 h-full rounded-full transition-all duration-500 ease-out" 
-                style={{ width: `${data?.weekly_completion_rate || 0}%` }}
-              />
-            </div>
-          </div>
-
-          {/* KPI Cards Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-            <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
-              <span className="text-xs text-slate-500 font-medium">Total Tasks</span>
-              <div className="text-2xl font-bold text-slate-900 mt-0.5">{data?.total_tasks || 0}</div>
-            </div>
-            <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-100">
-              <span className="text-xs text-emerald-700 font-medium">Done (Completed)</span>
-              <div className="text-2xl font-bold text-emerald-800 mt-0.5">{data?.completed_tasks || 0}</div>
-            </div>
-            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-100">
-              <span className="text-xs text-amber-700 font-medium">Pending</span>
-              <div className="text-2xl font-bold text-amber-800 mt-0.5">{data?.pending_tasks || 0}</div>
-            </div>
-            <div className="bg-red-50 rounded-xl p-3.5 border border-red-100">
-              <span className="text-xs text-red-700 font-medium">Overdue</span>
-              <div className="text-2xl font-bold text-red-800 mt-0.5">{data?.overdue_tasks || 0}</div>
+            <div>
+              <span className="text-slate-400 font-medium">Auto-Scheduling</span>
+              <div className="text-xl font-black text-emerald-400 mt-0.5">Active & Ready</div>
             </div>
           </div>
         </div>
 
-        {/* Control Bar: Search & Filter Tabs */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-            {[
-              { id: 'all', label: `All Tasks (${allTasks.length})` },
-              { id: 'today', label: `Today's Slots (${data?.today_tasks?.length || 0})` },
-              { id: 'pending', label: 'Pending' },
-              { id: 'completed', label: 'Completed' },
-              { id: 'high', label: 'High Priority' }
-            ].map((tab) => (
+        {/* 1-Click Schedule Presets */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">
+              1-Click Schedule Templates
+            </span>
+            <span className="text-xs text-slate-500">Select to auto-populate your week</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {PRESETS.map((preset) => (
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                  activeTab === tab.id 
-                    ? 'bg-slate-900 text-white shadow-sm' 
-                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
+                key={preset.name}
+                type="button"
+                onClick={() => handleApplyPreset(preset.slots)}
+                className="glass-card text-left p-4 rounded-2xl border hover:border-slate-400 transition-all space-y-1.5 group"
               >
-                {tab.label}
+                <div className="flex items-center justify-between">
+                  <h4 className="font-extrabold text-sm text-slate-950 group-hover:text-rose-600 transition-colors">
+                    {preset.name}
+                  </h4>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {preset.badge}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
+                  {preset.description}
+                </p>
               </button>
             ))}
           </div>
-
-          <div className="relative min-w-[220px]">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search tasks..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
-            />
-          </div>
         </div>
 
-        {/* Task List Section */}
-        <div className="space-y-3">
-          {loading ? (
-            <div className="p-8 text-center text-slate-400 text-xs">Refreshing tasks...</div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 space-y-3 shadow-sm">
-              <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <h3 className="font-bold text-slate-900 text-base">No tasks match this filter</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Create a new task with the "+ Add Task" button or generate a synchronized plan in the Roadmap tab.
-              </p>
-              <button 
-                onClick={openCreateModal}
-                className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors"
+        {/* 7-Day Visual Timeline Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {DAYS.map((dayName, dayIdx) => {
+            const daySlots = slots.filter((s) => s.day_of_week === dayIdx);
+            const totalMins = daySlots.reduce((sum, s) => sum + s.capacity_minutes, 0);
+            const hours = (totalMins / 60).toFixed(1);
+
+            return (
+              <div 
+                key={dayName} 
+                className="glass-card rounded-3xl p-5 border border-slate-200/80 space-y-4 shadow-sm hover:shadow-md transition-shadow"
               >
-                <Plus className="w-3.5 h-3.5" />
-                Create Task
-              </button>
-            </div>
-          ) : (
-            filteredTasks.map((task: any) => {
-              const isDone = task.status === 'completed';
-              const isHigh = task.priority === 'high';
-
-              return (
-                <div 
-                  key={task.id} 
-                  className={`group bg-white rounded-2xl p-4 sm:p-5 border transition-all duration-200 ${
-                    isDone 
-                      ? 'border-emerald-200 bg-emerald-50/20' 
-                      : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                      <button 
-                        onClick={() => handleToggleDone(task.id, task.status)}
-                        className={`mt-0.5 w-6 h-6 rounded-lg flex items-center justify-center border transition-all shrink-0 ${
-                          isDone 
-                            ? 'bg-emerald-600 border-emerald-600 text-white' 
-                            : 'border-slate-300 hover:border-slate-600 text-transparent'
-                        }`}
-                      >
-                        <Check className="w-4 h-4 stroke-" />
-                      </button>
-
-                      <div className="space-y-1.5 min-w-0">
-                        <h3 className={`font-semibold text-sm sm:text-base leading-snug break-words ${
-                          isDone ? 'line-through text-slate-400 font-normal' : 'text-slate-900'
-                        }`}>
-                          {task.title}
-                        </h3>
-
-                        {task.description && (
-                          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
-                            {task.description}
-                          </p>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-                          <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-md font-medium">
-                            <Clock className="w-3 h-3 text-slate-500" />
-                            {task.estimated_minutes} mins
-                          </span>
-
-                          <span className={`px-2 py-0.5 rounded-md font-medium capitalize text-xs ${
-                            isHigh 
-                              ? 'bg-red-100 text-red-700 font-semibold' 
-                              : task.priority === 'low'
-                              ? 'bg-slate-100 text-slate-600'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {task.priority} Priority
-                          </span>
-
-                          {task.google_calendar_event_id && (
-                            <a 
-                              href={task.google_calendar_event_id} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium hover:underline"
-                            >
-                              <Calendar className="w-3 h-3" />
-                              Google Calendar
-                            </a>
-                          )}
-                        </div>
-                      </div>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-slate-950 text-white flex items-center justify-center font-bold text-xs">
+                      {dayName.slice(0, 2)}
                     </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button 
-                        onClick={() => handleTriggerTestHarsh(task.id)}
-                        title="Send Tough Love / Harsh Email Alert"
-                        className="text-xs flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2.5 py-1.5 rounded-lg transition-colors font-semibold"
-                      >
-                        <Flame className="w-3.5 h-3.5 text-red-600" />
-                        <span className="hidden sm:inline">Harsh Alert</span>
-                      </button>
-
-                      <button 
-                        onClick={() => openEditModal(task)}
-                        title="Edit Task"
-                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-
-                      <button 
-                        onClick={() => handleDeleteTask(task.id)}
-                        title="Delete Task"
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    <div>
+                      <h3 className="font-black text-sm text-slate-950">{dayName}</h3>
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {totalMins > 0 ? `${hours} hours available` : 'No free hours set'}
+                      </span>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleAddSlot(dayIdx)}
+                    className="flex items-center gap-1 bg-slate-100 hover:bg-slate-950 hover:text-white text-slate-700 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Window</span>
+                  </button>
                 </div>
-              );
-            })
-          )}
+
+                {/* 24-hour mini-visualizer bar */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                    <span>00:00</span>
+                    <span>06:00</span>
+                    <span>12:00</span>
+                    <span>18:00</span>
+                    <span>24:00</span>
+                  </div>
+                  <div className="w-full h-3 bg-slate-100 rounded-full relative overflow-hidden border border-slate-200/60">
+                    {daySlots.map((slot, sIdx) => {
+                      const [sH, sM] = slot.start_time.split(':').map(Number);
+                      const [eH, eM] = slot.end_time.split(':').map(Number);
+                      const startPercent = ((sH * 60 + sM) / 1440) * 100;
+                      let durationPercent = (slot.capacity_minutes / 1440) * 100;
+                      if (durationPercent > 100) durationPercent = 100;
+
+                      return (
+                        <div
+                          key={sIdx}
+                          title={`${slot.start_time} - ${slot.end_time} (${slot.capacity_minutes} mins)`}
+                          className="absolute top-0 bottom-0 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full shadow-sm"
+                          style={{
+                            left: `${startPercent}%`,
+                            width: `${Math.max(3, durationPercent)}%`
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Slot Chips */}
+                <div className="space-y-2 pt-1">
+                  {daySlots.length === 0 ? (
+                    <div className="p-4 text-center border-2 border-dashed border-slate-100 rounded-2xl text-xs text-slate-400 font-medium">
+                      No availability scheduled for this day
+                    </div>
+                  ) : (
+                    daySlots.map((slot) => {
+                      const overallIndex = slots.indexOf(slot);
+                      return (
+                        <div
+                          key={overallIndex}
+                          className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 flex items-center justify-between text-xs"
+                        >
+                          <div className="flex items-center gap-2.5 text-slate-900 font-bold">
+                            <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+                            <span>{slot.start_time} — {slot.end_time}</span>
+                            <span className="text-slate-400 font-normal">
+                              ({(slot.capacity_minutes / 60).toFixed(1)} hrs)
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSlot(overallIndex)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                            title="Remove window"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Add / Edit Task Modal */}
+      {/* Add Slot Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-slide-up">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h2 className="text-lg font-bold text-slate-900">
-                {editingTask ? 'Edit Task' : 'Add New Task'}
-              </h2>
+              <div className="space-y-1">
+                <h3 className="text-lg font-black text-slate-950">Add Free-Time Window</h3>
+                <p className="text-xs text-slate-500">Select day and hours you have free for study/work.</p>
+              </div>
               <button 
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveTask} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700">Task Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Solve 50 Codeforces problems"
-                  value={taskForm.title}
-                  onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700">Description / Notes</label>
-                <textarea
-                  rows={3}
-                  placeholder="Problem links, notes, expected approach..."
-                  value={taskForm.description}
-                  onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
-                  className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
-                />
+            <form onSubmit={handleSaveModalSlot} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">Day of the Week</label>
+                <select
+                  value={targetDay}
+                  onChange={(e) => setTargetDay(Number(e.target.value))}
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
+                >
+                  {DAYS.map((d, i) => (
+                    <option key={d} value={i}>{d}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">Estimated Duration</label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min={10}
-                      step={5}
-                      value={taskForm.estimated_minutes}
-                      onChange={(e) => setTaskForm({ ...taskForm, estimated_minutes: Number(e.target.value) })}
-                      className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">
-                      mins
-                    </span>
-                  </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Start Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium font-mono"
+                  />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">Priority</label>
-                  <select
-                    value={taskForm.priority}
-                    onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
-                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white text-slate-800"
-                  >
-                    <option value="low">Low Priority</option>
-                    <option value="medium">Medium Priority</option>
-                    <option value="high">High Priority</option>
-                  </select>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">End Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium font-mono"
+                  />
                 </div>
               </div>
 
-              {editingTask && (
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">Status</label>
-                  <select
-                    value={taskForm.status}
-                    onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}
-                    className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 bg-white text-slate-800"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="completed">Completed (Done)</option>
-                  </select>
-                </div>
-              )}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
+                <span>Calculated Duration:</span>
+                <span className="font-bold text-slate-950 font-mono">
+                  {(calculateMinutes(startTime, endTime) / 60).toFixed(1)} hours ({calculateMinutes(startTime, endTime)} mins)
+                </span>
+              </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={() => handleSaveTask()}
-                  className="px-5 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-colors shadow-sm"
+                  type="submit"
+                  className="px-6 py-2.5 text-xs font-bold bg-slate-950 hover:bg-slate-850 text-white rounded-xl transition-all shadow-md active:scale-95"
                 >
-                  {editingTask ? 'Save Changes' : 'Create Task'}
+                  Add Window
                 </button>
               </div>
             </form>

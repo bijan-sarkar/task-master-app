@@ -1,13 +1,28 @@
 'use client';
+
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CheckSquare, Calendar, Compass, User, LogOut, ShieldAlert, Sparkles, Mail, Phone, X } from 'lucide-react';
-import { loginOrCreateUser } from '@/lib/api';
+import { 
+  CheckSquare, 
+  Calendar, 
+  Compass, 
+  User, 
+  LogOut, 
+  Flame, 
+  Sparkles, 
+  Mail, 
+  Phone, 
+  X,
+  ShieldAlert,
+  ChevronRight,
+  Zap
+} from 'lucide-react';
+import { loginOrCreateUser, getActiveUser, UserProfile } from '@/lib/api';
 
 export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {}) {
   const pathname = usePathname();
-  const [activeUser, setActiveUser] = useState<any>(null);
+  const [activeUser, setActiveUser] = useState<UserProfile | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
 
   // Auth Form State
@@ -19,23 +34,26 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
 
   useEffect(() => {
     loadUser();
-    window.addEventListener('storage_user_updated', loadUser);
-    window.addEventListener('open_auth_modal', () => setIsAuthOpen(true));
+    const handleStorageUpdate = () => loadUser();
+    const handleOpenAuth = () => setIsAuthOpen(true);
+
+    window.addEventListener('storage_user_updated', handleStorageUpdate);
+    window.addEventListener('open_auth_modal', handleOpenAuth);
     return () => {
-      window.removeEventListener('storage_user_updated', loadUser);
-      window.removeEventListener('open_auth_modal', () => setIsAuthOpen(true));
+      window.removeEventListener('storage_user_updated', handleStorageUpdate);
+      window.removeEventListener('open_auth_modal', handleOpenAuth);
     };
   }, []);
 
   function loadUser() {
-    try {
-      const stored = localStorage.getItem('taskmaster_active_user');
-      if (stored) {
-        setActiveUser(JSON.parse(stored));
-      } else {
-        setActiveUser(null);
-      }
-    } catch (e) {}
+    const u = getActiveUser();
+    setActiveUser(u);
+    if (u) {
+      setName(u.name || '');
+      setEmail(u.email || '');
+      setPhone(u.phone_number || '');
+      setTone(u.accountability_tone || 'harsh');
+    }
   }
 
   function handleLogout() {
@@ -56,52 +74,58 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
         phone_number: phone || undefined,
         accountability_tone: tone
       });
-      localStorage.setItem('taskmaster_active_user', JSON.stringify(user));
+      setActiveUser(user);
       window.dispatchEvent(new Event('storage_user_updated'));
       setIsAuthOpen(false);
     } catch (err) {
-      const fallbackUser = {
-        id: 'u-' + Date.now(),
-        name,
-        email,
-        phone_number: phone,
-        accountability_tone: tone
-      };
-      localStorage.setItem('taskmaster_active_user', JSON.stringify(fallbackUser));
-      window.dispatchEvent(new Event('storage_user_updated'));
-      setIsAuthOpen(false);
+      console.warn('Login handled locally:', err);
     } finally {
       setLoading(false);
     }
   }
 
   const navItems = [
-    { name: 'Dashboard', href: '/', icon: CheckSquare },
-    { name: 'Free Time', href: '/availability', icon: Calendar },
-    { name: 'Roadmap', href: '/roadmap', icon: Compass },
+    { name: 'Dashboard', href: '/', icon: CheckSquare, badge: 'Tasks' },
+    { name: 'Free Time', href: '/availability', icon: Calendar, badge: '7-Day' },
+    { name: 'Roadmap', href: '/roadmap', icon: Compass, badge: 'GSoC & AI' },
   ];
+
+  const toneConfig: Record<string, { label: string; color: string; desc: string }> = {
+    harsh: { label: 'Harsh Mode', color: 'bg-rose-100 text-rose-700 border-rose-200', desc: 'Direct, unapologetic reality checks when you procrastinate.' },
+    roast: { label: 'Roast Mode', color: 'bg-orange-100 text-orange-700 border-orange-200', desc: 'Sarcastic anti-slacking roasts designed to hurt your ego.' },
+    firm: { label: 'Firm Mode', color: 'bg-amber-100 text-amber-800 border-amber-200', desc: 'Strict, no-nonsense progress demands without fluff.' },
+    gentle: { label: 'Gentle Mode', color: 'bg-emerald-100 text-emerald-800 border-emerald-200', desc: 'Encouraging nudges and positive reinforcement.' },
+  };
+
+  const currentTone = toneConfig[activeUser?.accountability_tone || 'harsh'] || toneConfig.harsh;
 
   return (
     <>
-      {/* Desktop Top Navbar */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      {/* Sticky Frosted Header */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 transition-all">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          {/* Logo & Brand */}
           <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center text-white font-black text-base shadow-sm">
-                TM
+            <Link href="/" className="flex items-center gap-2.5 group">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-800 flex items-center justify-center text-white font-black text-sm shadow-md ring-1 ring-white/20 group-hover:scale-105 transition-transform">
+                <Zap className="w-5 h-5 text-rose-500 fill-rose-500" />
               </div>
-              <div>
-                <span className="font-bold text-slate-900 tracking-tight text-lg">TaskMaster</span>
-                <span className="hidden sm:inline text-[10px] uppercase tracking-wider ml-2 px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">
-                  {activeUser?.accountability_tone || 'Harsh'} Mode
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-slate-950 tracking-tight text-lg">TaskMaster</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-900 text-white tracking-widest uppercase">
+                    AI
+                  </span>
+                </div>
+                <span className="hidden sm:block text-[11px] text-slate-500 font-medium -mt-0.5">
+                  Accountability & Smart Scheduler
                 </span>
               </div>
             </Link>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1">
+          {/* Desktop Nav Links */}
+          <nav className="hidden md:flex items-center gap-1.5 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/60">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
@@ -109,31 +133,51 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
                 <Link
                   key={item.name}
                   href={item.href}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                     isActive
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      ? 'bg-white text-slate-950 shadow-sm ring-1 ring-slate-200'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {item.name}
+                  <Icon className={`w-4 h-4 ${isActive ? 'text-rose-600' : 'text-slate-400'}`} />
+                  <span>{item.name}</span>
+                  {isActive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                  )}
                 </Link>
               );
             })}
           </nav>
 
-          {/* User Profile / Login Button */}
-          <div className="flex items-center gap-2">
+          {/* Right Action Bar */}
+          <div className="flex items-center gap-2.5">
+            {/* Tone Pill */}
+            <button
+              onClick={() => setIsAuthOpen(true)}
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-transform hover:scale-105 ${currentTone.color}`}
+              title="Click to change accountability severity tone"
+            >
+              <Flame className="w-3.5 h-3.5 text-rose-600" />
+              <span>{currentTone.label}</span>
+            </button>
+
+            {/* User Profile / Login */}
             {activeUser ? (
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 pl-3">
-                <div className="text-right hidden sm:block">
-                  <div className="text-xs font-bold text-slate-900 line-clamp-1">{activeUser.name}</div>
-                  <div className="text-[10px] text-slate-500 line-clamp-1">{activeUser.email}</div>
+              <div className="flex items-center gap-2 bg-slate-100/90 border border-slate-200 rounded-2xl p-1.5 pl-3">
+                <button 
+                  onClick={() => setIsAuthOpen(true)}
+                  className="text-left hidden lg:block hover:opacity-80 transition-opacity"
+                >
+                  <div className="text-xs font-bold text-slate-900 leading-tight line-clamp-1">{activeUser.name}</div>
+                  <div className="text-[10px] text-slate-500 font-mono leading-none line-clamp-1">{activeUser.email}</div>
+                </button>
+                <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
+                  {activeUser.name ? activeUser.name.charAt(0).toUpperCase() : 'U'}
                 </div>
                 <button
                   onClick={handleLogout}
-                  title="Log out / Switch User"
-                  className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 transition-colors"
+                  title="Switch user or log out"
+                  className="p-1.5 hover:bg-slate-200/80 rounded-xl text-slate-400 hover:text-rose-600 transition-colors"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -141,18 +185,18 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
             ) : (
               <button
                 onClick={() => setIsAuthOpen(true)}
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition-colors shadow-sm"
+                className="flex items-center gap-2 bg-slate-950 hover:bg-slate-800 text-white px-4 py-2 rounded-2xl text-xs font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
               >
                 <User className="w-3.5 h-3.5" />
-                Sign In
+                <span>Account Setup</span>
               </button>
             )}
           </div>
         </div>
       </header>
 
-      {/* Mobile Bottom Navigation Bar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200 px-6 py-2 flex justify-around items-center shadow-lg">
+      {/* Floating Mobile Bottom Navigation */}
+      <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 bg-slate-950/95 backdrop-blur-xl border border-white/10 rounded-2xl p-2 flex justify-around items-center shadow-2xl">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
@@ -160,30 +204,30 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
             <Link
               key={item.name}
               href={item.href}
-              className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg text-xs font-semibold transition-colors ${
-                isActive ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-600'
+              className={`flex flex-col items-center gap-1 py-1.5 px-4 rounded-xl text-[11px] font-bold transition-all ${
+                isActive ? 'bg-white/10 text-white ring-1 ring-white/20' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className={`w-4 h-4 ${isActive ? 'text-rose-400' : ''}`} />
               <span>{item.name}</span>
             </Link>
           );
         })}
       </div>
 
-      {/* Built-in Auth Modal */}
+      {/* User Auth & Settings Modal */}
       {isAuthOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-start justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-slide-up">
+            <div className="flex items-start justify-between pb-2 border-b border-slate-100">
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-bold">
-                  <Sparkles className="w-3 h-3 text-amber-500" />
-                  Account & Profile
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 text-[11px] font-bold">
+                  <Flame className="w-3 h-3 text-rose-600" />
+                  Accountability Profile
                 </div>
-                <h2 className="text-xl font-bold text-slate-900 tracking-tight">Active User Sign-In</h2>
+                <h2 className="text-xl font-black text-slate-950 tracking-tight">Active User & Alert Settings</h2>
                 <p className="text-xs text-slate-500">
-                  Save your personal tasks, schedule, and roadmap into your Supabase database.
+                  Save your personal roadmap, daily schedule, and choose your tough-love alert tone.
                 </p>
               </div>
               <button 
@@ -195,10 +239,10 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
             </div>
 
             <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-slate-400" />
-                  Your Full Name *
+                  Your Name *
                 </label>
                 <input
                   type="text"
@@ -206,14 +250,14 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
                   placeholder="e.g. Bijon Sarkar"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-slate-400" />
-                  Email Address (for reminder alerts) *
+                  Email Address (for Harsh Reminder Alerts) *
                 </label>
                 <input
                   type="email"
@@ -221,47 +265,62 @@ export default function Navbar({ onOpenAuth }: { onOpenAuth?: () => void } = {})
                   placeholder="e.g. you@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5 text-slate-400" />
-                  WhatsApp Phone (optional)
+                  WhatsApp Number (optional)
                 </label>
                 <input
-                  type="text"
+                  type="tel"
                   placeholder="+8801XXXXXXXXX"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
-                  Accountability Tone
+                  Accountability Personality Tone
                 </label>
-                <select
-                  value={tone}
-                  onChange={(e) => setTone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800 bg-white"
-                >
-                  <option value="harsh">Harsh (Tough Love — Recommended)</option>
-                  <option value="roast">Roast (Aggressive Anti-Procrastination)</option>
-                  <option value="firm">Firm (Direct & Objective)</option>
-                  <option value="gentle">Gentle (Polite encouragement)</option>
-                </select>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {Object.entries(toneConfig).map(([key, cfg]) => {
+                    const isSelected = tone === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setTone(key)}
+                        className={`p-2.5 rounded-xl border text-left transition-all ${
+                          isSelected
+                            ? 'border-slate-950 bg-slate-900 text-white shadow-sm'
+                            : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="font-bold text-xs capitalize">{key}</div>
+                        <div className={`text-[10px] line-clamp-1 ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                          {key === 'harsh' ? 'Tough Love' : key === 'roast' ? 'Aggressive' : key === 'firm' ? 'Direct' : 'Supportive'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-slate-500 pt-1 italic">
+                  "{toneConfig[tone]?.desc}"
+                </p>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold transition-colors shadow-md disabled:opacity-50 mt-2"
+                className="w-full py-3 bg-slate-950 hover:bg-slate-850 text-white rounded-xl text-sm font-bold transition-all shadow-md active:scale-98 disabled:opacity-50 mt-3"
               >
-                {loading ? 'Signing In...' : 'Save & Enter TaskMaster'}
+                {loading ? 'Saving Profile...' : 'Save & Enter TaskMaster'}
               </button>
             </form>
           </div>
