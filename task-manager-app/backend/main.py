@@ -11,6 +11,7 @@ from services.roadmap import generate_gsoc_5month_curriculum, generate_custom_cu
 from services.email_service import generate_accountability_message, send_email_notification
 from services.calendar_service import generate_google_calendar_url
 from services.whatsapp_service import send_whatsapp_message
+from services.diu_catalog import get_all_diu_presets, get_course_details, DIU_COURSE_CATALOG
 
 # Create database tables automatically
 Base.metadata.create_all(bind=engine)
@@ -340,3 +341,245 @@ def trigger_test_reminder(task_id: str, background_tasks: BackgroundTasks, db: S
         )
 
     return {"status": "dispatched", "task": task.title, "preview": content}
+
+# ==================== DIU SEMESTER TRACKER ENDPOINTS ====================
+@app.get("/api/diu/presets")
+def get_diu_presets():
+    """Returns DIU official curricula, semester bundles, and comprehensive course metadata."""
+    return get_all_diu_presets()
+
+@app.get("/api/diu/semesters/{user_id}", response_model=List[schemas.DIUSemesterResponse])
+def get_user_diu_semesters(user_id: str, db: Session = Depends(get_db)):
+    """Retrieves all registered semesters and enrolled courses for a student."""
+    return db.query(models.DIUSemester).filter(models.DIUSemester.user_id == user_id).order_by(models.DIUSemester.created_at.desc()).all()
+
+@app.post("/api/diu/semesters/{user_id}", response_model=schemas.DIUSemesterResponse)
+def create_user_diu_semester(user_id: str, payload: schemas.DIUSemesterCreate, db: Session = Depends(get_db)):
+    """Creates a new semester for the student and sets it as active."""
+    # Ensure previous semesters are not marked active if needed
+    db.query(models.DIUSemester).filter(models.DIUSemester.user_id == user_id).update({"is_active": 0})
+    semester = models.DIUSemester(
+        user_id=user_id,
+        title=payload.title,
+        term=payload.term,
+        department=payload.department,
+        is_active=1
+    )
+    db.add(semester)
+    db.commit()
+    db.refresh(semester)
+    return semester
+
+@app.post("/api/diu/courses/enroll/{semester_id}", response_model=schemas.DIUCourseResponse)
+def enroll_course(semester_id: str, payload: schemas.DIUCourseCreate, db: Session = Depends(get_db)):
+    """Enrolls in a course and automatically loads its topics, past questions, and prerequisite survival guide."""
+    semester = db.query(models.DIUSemester).filter(models.DIUSemester.id == semester_id).first()
+    if not semester:
+        raise HTTPException(status_code=404, detail="Semester not found")
+
+    catalog_data = get_course_details(payload.code)
+    course = models.DIUCourse(
+        semester_id=semester_id,
+        code=payload.code,
+        name=payload.name or catalog_data.get("name", payload.code),
+        credits=payload.credits or catalog_data.get("credits", "3.0"),
+        department=payload.department or catalog_data.get("department", "CSE"),
+        description=payload.description or catalog_data.get("description", ""),
+        prerequisites_guide=payload.prerequisites_guide or catalog_data.get("prerequisites_guide")
+    )
+    db.add(course)
+    db.commit()
+    db.refresh(course)
+
+    # Automatically populate Midterm topics
+    mid_topics = catalog_data.get("midterm_topics", [])
+    for t in mid_topics:
+        db.add(models.DIUTopic(
+            course_id=course.id,
+            name=t["name"],
+            exam_term="midterm",
+            priority_stars=t.get("priority_stars", 5),
+            priority_label=t.get("priority_label", "Critical"),
+            importance_score=t.get("importance_score", 90),
+            repeat_frequency=t.get("repeat_frequency", "Frequently asked"),
+            marks_weightage=t.get("marks_weightage", "10 - 15 marks"),
+            expected_question_types=t.get("expected_question_types", ["code", "dry_run"]),
+            description=t.get("description", ""),
+            status="pending"
+        ))
+
+    # Automatically populate Final topics
+    final_topics = catalog_data.get("final_topics", [])
+    for t in final_topics:
+        db.add(models.DIUTopic(
+            course_id=course.id,
+            name=t["name"],
+            exam_term="final",
+            priority_stars=t.get("priority_stars", 5),
+            priority_label=t.get("priority_label", "Critical"),
+            importance_score=t.get("importance_score", 90),
+            repeat_frequency=t.get("repeat_frequency", "Frequently asked"),
+            marks_weightage=t.get("marks_weightage", "10 - 15 marks"),
+            expected_question_types=t.get("expected_question_types", ["code", "diagram"]),
+            description=t.get("description", ""),
+            status="pending"
+        ))
+
+    # Automatically populate past questions
+    past_qs = catalog_data.get("past_questions", [])
+    for q in past_qs:
+        db.add(models.DIUPastQuestion(
+            course_id=course.id,
+            course_code=course.code,
+            exam_term=q["exam_term"],
+            exam_session=q["exam_session"],
+            question_type=q["question_type"],
+            question_text=q["question_text"],
+            marks=q.get("marks", 5),
+            topic_name=q.get("topic_name"),
+            solution_hints=q.get("solution_hints")
+        ))
+
+    db.commit()
+    db.refresh(course)
+    return course
+
+@app.delete("/api/diu/courses/{course_id}")
+def delete_course(course_id: str, db: Session = Depends(get_db)):
+    """Removes an enrolled course and associated topics and past questions."""
+    course = db.query(models.DIUCourse).filter(models.DIUCourse.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    db.delete(course)
+    db.commit()
+    return {"status": "deleted", "course_id": course_id}
+
+@app.get("/api/diu/courses/{course_id}/analysis", response_model=schemas.CourseAnalysisResponse)
+def get_course_analysis(course_id: str, db: Session = Depends(get_db)):
+    """Retrieves full exam preparation analysis for a course, with midterm vs final breakdown, priority ratings, and readiness."""
+    course = db.query(models.DIUCourse).filter(models.DIUCourse.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    topics = db.query(models.DIUTopic).filter(models.DIUTopic.course_id == course_id).all()
+    midterm_topics = [t for t in topics if t.exam_term == "midterm"]
+    final_topics = [t for t in topics if t.exam_term == "final"]
+
+    midterm_topics.sort(key=lambda x: x.priority_stars, reverse=True)
+    final_topics.sort(key=lambda x: x.priority_stars, reverse=True)
+
+    mid_mastered = sum(1 for t in midterm_topics if t.status == "mastered")
+    mid_pct = round((mid_mastered / len(midterm_topics) * 100), 1) if midterm_topics else 0.0
+
+    final_mastered = sum(1 for t in final_topics if t.status == "mastered")
+    final_pct = round((final_mastered / len(final_topics) * 100), 1) if final_topics else 0.0
+
+    past_count = db.query(models.DIUPastQuestion).filter(
+        (models.DIUPastQuestion.course_id == course_id) | (models.DIUPastQuestion.course_code == course.code)
+    ).count()
+
+    return schemas.CourseAnalysisResponse(
+        course=course,
+        midterm_topics=midterm_topics,
+        final_topics=final_topics,
+        past_questions_count=past_count,
+        midterm_readiness_pct=mid_pct,
+        final_readiness_pct=final_pct
+    )
+
+@app.patch("/api/diu/topics/{topic_id}/status")
+def update_topic_status(topic_id: str, payload: schemas.DIUTopicStatusUpdate, db: Session = Depends(get_db)):
+    """Toggles topic preparation status (pending, learning, mastered)."""
+    topic = db.query(models.DIUTopic).filter(models.DIUTopic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    topic.status = payload.status
+    db.commit()
+    return {"status": "updated", "topic_id": topic_id, "new_status": topic.status}
+
+@app.get("/api/diu/questions", response_model=List[schemas.DIUPastQuestionResponse])
+def get_past_questions(
+    course_code: str = None,
+    exam_term: str = None,
+    question_type: str = None,
+    exam_session: str = None,
+    db: Session = Depends(get_db)
+):
+    """Queries previous years' DIU exam questions with multi-filters."""
+    query = db.query(models.DIUPastQuestion)
+    if course_code:
+        query = query.filter(models.DIUPastQuestion.course_code == course_code)
+    if exam_term:
+        query = query.filter(models.DIUPastQuestion.exam_term == exam_term)
+    if question_type:
+        query = query.filter(models.DIUPastQuestion.question_type == question_type)
+    if exam_session:
+        query = query.filter(models.DIUPastQuestion.exam_session == exam_session)
+    
+    results = query.order_by(models.DIUPastQuestion.created_at.desc()).all()
+    
+    # If database is fresh and query matched nothing, supplement with catalog questions
+    if not results and course_code:
+        catalog = get_course_details(course_code)
+        preset_qs = catalog.get("past_questions", [])
+        filtered = []
+        for q in preset_qs:
+            if exam_term and q["exam_term"] != exam_term:
+                continue
+            if question_type and q["question_type"] != question_type:
+                continue
+            if exam_session and q["exam_session"] != exam_session:
+                continue
+            filtered.append(models.DIUPastQuestion(
+                id=f"preset-{len(filtered)+1}",
+                course_code=course_code,
+                exam_term=q["exam_term"],
+                exam_session=q["exam_session"],
+                question_type=q["question_type"],
+                question_text=q["question_text"],
+                marks=q.get("marks", 5),
+                topic_name=q.get("topic_name"),
+                solution_hints=q.get("solution_hints")
+            ))
+        return filtered
+
+    return results
+
+@app.post("/api/diu/questions", response_model=schemas.DIUPastQuestionResponse)
+def add_past_question(payload: schemas.DIUPastQuestionCreate, db: Session = Depends(get_db)):
+    """Allows students to contribute a past exam question to the question bank."""
+    question = models.DIUPastQuestion(
+        course_code=payload.course_code,
+        exam_term=payload.exam_term,
+        exam_session=payload.exam_session,
+        question_type=payload.question_type,
+        question_text=payload.question_text,
+        marks=payload.marks,
+        topic_name=payload.topic_name,
+        solution_hints=payload.solution_hints
+    )
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+    return question
+
+@app.post("/api/diu/topics/{topic_id}/create-task")
+def schedule_topic_study_task(topic_id: str, user_id: str, db: Session = Depends(get_db)):
+    """Converts an exam topic into a concrete revision task in the student's task scheduler."""
+    topic = db.query(models.DIUTopic).filter(models.DIUTopic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    course = db.query(models.DIUCourse).filter(models.DIUCourse.id == topic.course_id).first()
+    
+    types_str = ", ".join(topic.expected_question_types or ["Exam practice"])
+    task = models.Task(
+        user_id=user_id,
+        title=f"[{course.code if course else 'DIU'} {topic.exam_term.title()}] Revise: {topic.name}",
+        description=f"Priority: {topic.priority_label} ({topic.priority_stars}★) | Expected Question Types: {types_str} | Marks: {topic.marks_weightage}",
+        estimated_minutes=90,
+        priority="high" if topic.priority_stars >= 4 else "medium"
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return {"status": "created", "task_id": task.id, "title": task.title}

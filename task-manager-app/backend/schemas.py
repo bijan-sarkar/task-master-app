@@ -97,3 +97,90 @@ class DashboardSummary(BaseModel):
     today_tasks: List[TaskResponse]
     upcoming_tasks: List[TaskResponse]
     all_tasks: List[TaskResponse] = []
+
+# ==================== DIU SEMESTER TRACKER SCHEMAS ====================
+class DIUTopicResponse(BaseModel):
+    id: str
+    course_id: str
+    name: str
+    exam_term: str # "midterm" or "final"
+    priority_stars: int
+    priority_label: str
+    importance_score: int
+    repeat_frequency: str
+    marks_weightage: str
+    expected_question_types: List[str] = []
+    status: str
+    notes: Optional[str] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class DIUTopicStatusUpdate(BaseModel):
+    status: str # "pending", "learning", "mastered"
+
+class DIUPastQuestionCreate(BaseModel):
+    course_code: str
+    exam_term: str # "midterm" or "final"
+    exam_session: str # "Fall 2024", etc.
+    question_type: str # "code", "dry_run", "theory", "difference", "math", "diagram"
+    question_text: str
+    marks: int = 5
+    topic_name: Optional[str] = None
+    solution_hints: Optional[str] = None
+
+class DIUPastQuestionResponse(DIUPastQuestionCreate):
+    id: str
+    course_id: Optional[str] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class DIUCourseCreate(BaseModel):
+    code: str
+    name: str
+    credits: str = "3.0"
+    department: str = "CSE"
+    description: Optional[str] = None
+    prerequisites_guide: Optional[Dict[str, Any]] = None
+
+class DIUCourseResponse(BaseModel):
+    id: str
+    semester_id: str
+    code: str
+    name: str
+    credits: str
+    department: str
+    description: Optional[str] = None
+    prerequisites_guide: Optional[Dict[str, Any]] = None
+    target_grade: str
+    created_at: datetime
+    topics: List[DIUTopicResponse] = []
+    class Config:
+        from_attributes = True
+
+class DIUSemesterCreate(BaseModel):
+    title: str # e.g. "Semester 3 (Level 2 Term 1)"
+    term: str = "Spring 2025"
+    department: str = "CSE"
+
+class DIUSemesterResponse(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    term: str
+    department: str
+    is_active: int
+    created_at: datetime
+    courses: List[DIUCourseResponse] = []
+    class Config:
+        from_attributes = True
+
+class CourseAnalysisResponse(BaseModel):
+    course: DIUCourseResponse
+    midterm_topics: List[DIUTopicResponse]
+    final_topics: List[DIUTopicResponse]
+    past_questions_count: int
+    midterm_readiness_pct: float
+    final_readiness_pct: float
+

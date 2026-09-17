@@ -82,3 +82,72 @@ class NotificationLog(Base):
     sent_at = Column(DateTime, default=datetime.utcnow)
 
     task = relationship("Task", back_populates="notifications")
+
+class DIUSemester(Base):
+    __tablename__ = "diu_semesters"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=False) # e.g. "Semester 3 (Level 2 Term 1)"
+    term = Column(String, nullable=False, default="Spring 2025") # e.g. "Spring 2025"
+    department = Column(String, nullable=False, default="CSE") # CSE, SWE, CIS, EEE
+    is_active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    courses = relationship("DIUCourse", back_populates="semester", cascade="all, delete-orphan")
+
+class DIUCourse(Base):
+    __tablename__ = "diu_courses"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    semester_id = Column(String, ForeignKey("diu_semesters.id"), nullable=False)
+    code = Column(String, nullable=False, index=True) # e.g. "CSE221"
+    name = Column(String, nullable=False) # e.g. "Data Structures"
+    credits = Column(String, default="3.0")
+    department = Column(String, default="CSE")
+    description = Column(Text, nullable=True)
+    prerequisites_guide = Column(JSON, nullable=True) # foundational requirements, tips for A+, pitfalls
+    target_grade = Column(String, default="A+")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    semester = relationship("DIUSemester", back_populates="courses")
+    topics = relationship("DIUTopic", back_populates="course", cascade="all, delete-orphan")
+    past_questions = relationship("DIUPastQuestion", back_populates="course", cascade="all, delete-orphan")
+
+class DIUTopic(Base):
+    __tablename__ = "diu_topics"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    course_id = Column(String, ForeignKey("diu_courses.id"), nullable=False)
+    name = Column(String, nullable=False)
+    exam_term = Column(String, nullable=False) # "midterm" or "final"
+    priority_stars = Column(Integer, default=5) # 1 to 5
+    priority_label = Column(String, default="Critical") # Critical, High, Medium, Low
+    importance_score = Column(Integer, default=90) # 0 to 100
+    repeat_frequency = Column(String, default="Frequently asked") # e.g. "Appeared in 6/7 recent DIU exams"
+    marks_weightage = Column(String, default="10 - 15 marks")
+    expected_question_types = Column(JSON, default=list) # ["code", "dry_run", "difference"]
+    status = Column(String, default="pending") # "pending", "learning", "mastered"
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    course = relationship("DIUCourse", back_populates="topics")
+
+class DIUPastQuestion(Base):
+    __tablename__ = "diu_past_questions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    course_id = Column(String, ForeignKey("diu_courses.id"), nullable=True)
+    course_code = Column(String, nullable=False, index=True) # e.g. "CSE221"
+    exam_term = Column(String, nullable=False) # "midterm" or "final"
+    exam_session = Column(String, nullable=False) # e.g. "Fall 2024", "Spring 2024"
+    question_type = Column(String, nullable=False) # "code", "dry_run", "theory", "difference", "math", "diagram"
+    question_text = Column(Text, nullable=False)
+    marks = Column(Integer, default=5)
+    topic_name = Column(String, nullable=True)
+    solution_hints = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    course = relationship("DIUCourse", back_populates="past_questions")
+

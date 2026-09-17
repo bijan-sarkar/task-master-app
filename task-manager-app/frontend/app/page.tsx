@@ -3,892 +3,720 @@
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import { 
-  CheckCircle2, 
-  Clock, 
-  AlertTriangle, 
+  GraduationCap, 
+  BookOpen, 
   Calendar, 
-  Flame, 
-  Check, 
+  Clock, 
+  CheckCircle2, 
+  AlertTriangle, 
   Plus, 
-  Edit3, 
   Trash2, 
   Search, 
   Sparkles, 
-  X,
-  LayoutGrid,
-  List as ListIcon,
-  Send,
-  Copy,
-  ExternalLink,
-  ArrowRight,
-  TrendingUp,
-  Tag,
-  Zap
+  ArrowRight, 
+  Flame, 
+  Award, 
+  Check, 
+  Layers, 
+  ChevronRight, 
+  HelpCircle, 
+  Bookmark, 
+  TrendingUp, 
+  Filter, 
+  Compass, 
+  FileText,
+  Star,
+  Zap,
+  Info
 } from 'lucide-react';
 import { 
-  fetchDashboard, 
-  updateTaskStatus, 
-  triggerHarshReminderTest, 
-  createNewTask, 
-  updateTask, 
-  deleteTask, 
-  scheduleUnallocatedTasks,
+  fetchUserSemesters, 
+  createSemester, 
+  enrollCourse, 
+  deleteCourse, 
+  updateTopicStatus, 
+  createTopicStudyTaskLocally, 
   getActiveUser,
-  TaskItem,
-  getLocalTasks,
-  saveLocalTasks
+  UserSemesterRecord,
+  DIUCourseItem,
+  DIUTopicItem
 } from '@/lib/api';
+import { DIU_SEMESTER_PRESETS, DIU_COURSE_CATALOG } from '@/lib/diuData';
 
-export default function Dashboard() {
+export default function DIUSemesterDashboard() {
   const [mounted, setMounted] = useState(false);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [semesters, setSemesters] = useState<UserSemesterRecord[]>([]);
+  const [activeSemId, setActiveSemId] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
-  const [activeTab, setActiveTab] = useState<'all' | 'today' | 'high' | 'pending' | 'completed'>('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [activeUser, setActiveUser] = useState<any>(null);
 
-  // Quick inline add
-  const [quickTitle, setQuickTitle] = useState('');
-  const [quickPriority, setQuickPriority] = useState<'low' | 'medium' | 'high'>('high');
-  const [quickMinutes, setQuickMinutes] = useState(60);
+  // Modals
+  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
+  const [isNewSemModalOpen, setIsNewSemModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Status notifications
-  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'alert'; text: string } | null>(null);
+  // New Semester Form
+  const [newSemTitle, setNewSemTitle] = useState('Semester 3 (Level 2 Term 1)');
+  const [newSemTerm, setNewSemTerm] = useState('Spring 2025');
+  const [newSemDept, setNewSemDept] = useState('CSE');
 
-  // Modal State for Edit / Add
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
-  const [taskForm, setTaskForm] = useState({
-    title: '',
-    description: '',
-    estimated_minutes: 60,
-    priority: 'medium' as 'low' | 'medium' | 'high',
-    status: 'pending' as 'pending' | 'in_progress' | 'completed'
-  });
-
-  // Harsh Alert Preview Modal
-  const [alertModalTask, setAlertModalTask] = useState<TaskItem | null>(null);
-  const [alertTone, setAlertTone] = useState<'harsh' | 'roast' | 'firm' | 'gentle'>('harsh');
-  const [alertPreview, setAlertPreview] = useState<{ subject: string; body: string } | null>(null);
-  const [alertSending, setAlertSending] = useState(false);
+  // Enrollment Form
+  const [enrollType, setEnrollType] = useState<'preset' | 'catalog' | 'custom'>('preset');
+  const [selectedPresetSem, setSelectedPresetSem] = useState<number>(3);
+  const [selectedCatalogCourse, setSelectedCatalogCourse] = useState<string>('CSE221');
+  const [customCourseCode, setCustomCourseCode] = useState('');
+  const [customCourseName, setCustomCourseName] = useState('');
+  const [customCredits, setCustomCredits] = useState('3.0');
 
   useEffect(() => {
     setMounted(true);
-    checkUserAndLoad();
-    const handleStorage = () => checkUserAndLoad();
-    window.addEventListener('storage_user_updated', handleStorage);
-    return () => window.removeEventListener('storage_user_updated', handleStorage);
-  }, []);
-
-  function checkUserAndLoad() {
     const u = getActiveUser();
     setActiveUser(u);
-    if (u?.accountability_tone) {
-      setAlertTone(u.accountability_tone as any);
-    }
-    loadData(u?.id);
-  }
+    loadSemesters();
 
-  async function loadData(userId?: string) {
+    const handleUpdate = () => loadSemesters();
+    window.addEventListener('diu_semesters_updated', handleUpdate);
+    return () => window.removeEventListener('diu_semesters_updated', handleUpdate);
+  }, []);
+
+  async function loadSemesters() {
     setLoading(true);
-    const local = getLocalTasks();
-    setTasks(local);
-
-    try {
-      const res = await fetchDashboard(userId);
-      if (res && res.all_tasks && res.all_tasks.length > 0) {
-        // Merge without losing local updates
-        const merged = [...local];
-        for (const st of res.all_tasks) {
-          if (!merged.some(m => m.id === st.id)) {
-            merged.push(st);
-          }
-        }
-        setTasks(merged);
-        saveLocalTasks(merged);
-      }
-    } catch (err) {
-      // Offline fallback already populated
-    } finally {
-      setLoading(false);
+    const list = await fetchUserSemesters();
+    setSemesters(list);
+    if (list.length > 0) {
+      const active = list.find(s => s.is_active === 1) || list[0];
+      setActiveSemId(active.id);
     }
+    setLoading(false);
   }
 
-  function showToast(text: string, type: 'success' | 'alert' = 'success') {
-    setToastMessage({ text, type });
-    setTimeout(() => setToastMessage(null), 4000);
+  function showToast(msg: string) {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
   }
 
-  // Quick Add via Enter
-  async function handleQuickAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!quickTitle.trim()) return;
+  const currentSemester = semesters.find(s => s.id === activeSemId) || semesters[0];
+  const courses: DIUCourseItem[] = currentSemester?.courses || [];
 
-    const newTask: TaskItem = {
-      id: 'task-' + Date.now(),
-      title: quickTitle.trim(),
-      description: '',
-      estimated_minutes: quickMinutes,
-      priority: quickPriority,
-      status: 'pending',
-      created_at: new Date().toISOString()
-    };
+  // Calculate overall metrics
+  const totalCourses = courses.length;
+  const totalCredits = courses.reduce((sum, c) => sum + parseFloat(c.credits || '3.0'), 0);
 
-    const updated = [newTask, ...tasks];
-    setTasks(updated);
-    saveLocalTasks(updated);
-    setQuickTitle('');
-    showToast(`Added: "${newTask.title}"`);
+  let totalMidTopics = 0;
+  let masteredMidTopics = 0;
+  let totalFinalTopics = 0;
+  let masteredFinalTopics = 0;
+  const pendingCriticalTopics: { course: DIUCourseItem; topic: DIUTopicItem }[] = [];
 
-    try {
-      await createNewTask(activeUser?.id, newTask);
-    } catch (e) {}
-  }
-
-  // Save Modal (Create or Edit)
-  async function handleSaveModalTask(e?: React.FormEvent) {
-    if (e) e.preventDefault();
-    if (!taskForm.title.trim()) return;
-
-    if (editingTask) {
-      const updated = tasks.map(t => t.id === editingTask.id ? { ...t, ...taskForm } : t);
-      setTasks(updated);
-      saveLocalTasks(updated);
-      setIsModalOpen(false);
-      showToast(`Updated "${taskForm.title}"`);
-      try {
-        await updateTask(editingTask.id, taskForm);
-      } catch (err) {}
-    } else {
-      const newTask: TaskItem = {
-        id: 'task-' + Date.now(),
-        title: taskForm.title.trim(),
-        description: taskForm.description,
-        estimated_minutes: taskForm.estimated_minutes,
-        priority: taskForm.priority,
-        status: taskForm.status,
-        created_at: new Date().toISOString()
-      };
-      const updated = [newTask, ...tasks];
-      setTasks(updated);
-      saveLocalTasks(updated);
-      setIsModalOpen(false);
-      showToast(`Created task "${newTask.title}"`);
-      try {
-        await createNewTask(activeUser?.id, newTask);
-      } catch (err) {}
-    }
-  }
-
-  async function handleDeleteTask(taskId: string) {
-    if (!confirm('Are you sure you want to delete this task?')) return;
-    const updated = tasks.filter(t => t.id !== taskId);
-    setTasks(updated);
-    saveLocalTasks(updated);
-    showToast('Task removed');
-    try {
-      await deleteTask(taskId);
-    } catch (e) {}
-  }
-
-  async function handleToggleStatus(taskId: string, currentStatus: string) {
-    const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    const updated = tasks.map(t => t.id === taskId ? { ...t, status: nextStatus as any } : t);
-    setTasks(updated);
-    saveLocalTasks(updated);
-
-    if (nextStatus === 'completed') {
-      showToast('🎉 Task completed! Keep the streak alive!');
-    }
-    try {
-      await updateTaskStatus(taskId, nextStatus);
-    } catch (e) {}
-  }
-
-  async function handleMoveStatus(taskId: string, newStatus: 'pending' | 'in_progress' | 'completed') {
-    const updated = tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t);
-    setTasks(updated);
-    saveLocalTasks(updated);
-    try {
-      await updateTaskStatus(taskId, newStatus);
-    } catch (e) {}
-  }
-
-  async function handleAutoSchedule() {
-    showToast('Fitting pending tasks into your free-time slots...', 'alert');
-    try {
-      const res = await scheduleUnallocatedTasks(activeUser?.id);
-      showToast(`✓ Scheduled ${res.scheduled_count || 0} tasks into your available hours!`);
-      loadData(activeUser?.id);
-    } catch (err) {
-      showToast('Tasks scheduled into available slots.');
-    }
-  }
-
-  // Open Harsh Alert Preview Modal
-  async function openHarshAlertModal(task: TaskItem) {
-    setAlertModalTask(task);
-    const tone = activeUser?.accountability_tone || 'harsh';
-    setAlertTone(tone as any);
-    const res = await triggerHarshReminderTest(task.id, tone);
-    setAlertPreview(res.preview);
-  }
-
-  async function changeAlertTone(newTone: 'harsh' | 'roast' | 'firm' | 'gentle') {
-    setAlertTone(newTone);
-    if (alertModalTask) {
-      const res = await triggerHarshReminderTest(alertModalTask.id, newTone);
-      setAlertPreview(res.preview);
-    }
-  }
-
-  async function sendHarshAlertNow() {
-    if (!alertModalTask) return;
-    setAlertSending(true);
-    try {
-      await triggerHarshReminderTest(alertModalTask.id, alertTone);
-      showToast(`🔥 Alert sent to ${activeUser?.email || 'your email'}!`, 'alert');
-      setAlertModalTask(null);
-    } catch (e) {
-      showToast('Alert dispatched.');
-      setAlertModalTask(null);
-    } finally {
-      setAlertSending(false);
-    }
-  }
-
-  if (!mounted) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex items-center gap-3 text-slate-500 text-sm font-semibold">
-          <div className="w-5 h-5 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
-          Initializing TaskMaster...
-        </div>
-      </div>
-    );
-  }
-
-  // Calculations
-  const totalCount = tasks.length;
-  const completedCount = tasks.filter(t => t.status === 'completed').length;
-  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
-  const pendingCount = tasks.filter(t => t.status === 'pending').length;
-  const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-
-  // Filtering
-  const filteredTasks = tasks.filter((t) => {
-    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    if (!matchesSearch) return false;
-
-    if (activeTab === 'today') return t.status !== 'completed' || t.scheduled_start;
-    if (activeTab === 'high') return t.priority === 'high';
-    if (activeTab === 'pending') return t.status !== 'completed';
-    if (activeTab === 'completed') return t.status === 'completed';
-    return true;
+  courses.forEach(c => {
+    (c.midterm_topics || []).forEach(t => {
+      totalMidTopics++;
+      if (t.status === 'mastered') masteredMidTopics++;
+      else if (t.priority_stars >= 5) pendingCriticalTopics.push({ course: c, topic: t });
+    });
+    (c.final_topics || []).forEach(t => {
+      totalFinalTopics++;
+      if (t.status === 'mastered') masteredFinalTopics++;
+      else if (t.priority_stars >= 5) pendingCriticalTopics.push({ course: c, topic: t });
+    });
   });
 
+  const midReadinessPct = totalMidTopics > 0 ? Math.round((masteredMidTopics / totalMidTopics) * 100) : 0;
+  const finalReadinessPct = totalFinalTopics > 0 ? Math.round((masteredFinalTopics / totalFinalTopics) * 100) : 0;
+
+  async function handleCreateSemester(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newSemTitle.trim()) return;
+    const sem = await createSemester(newSemTitle, newSemTerm, newSemDept);
+    setActiveSemId(sem.id);
+    setIsNewSemModalOpen(false);
+    showToast(`Created & switched to ${sem.title}!`);
+  }
+
+  async function handleEnrollSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentSemester) return;
+
+    if (enrollType === 'preset') {
+      const preset = (DIU_SEMESTER_PRESETS[currentSemester.department || 'CSE'] || []).find(p => p.semester_number === selectedPresetSem);
+      if (preset) {
+        for (const item of preset.recommended_courses) {
+          await enrollCourse(currentSemester.id, item.code, item.name);
+        }
+        showToast(`Enrolled all ${preset.recommended_courses.length} courses for ${preset.title}!`);
+      }
+    } else if (enrollType === 'catalog') {
+      const cat = DIU_COURSE_CATALOG[selectedCatalogCourse];
+      if (cat) {
+        await enrollCourse(currentSemester.id, cat.code, cat.name);
+        showToast(`Enrolled ${cat.code} - ${cat.name}!`);
+      }
+    } else {
+      if (!customCourseCode.trim()) return;
+      await enrollCourse(currentSemester.id, customCourseCode.toUpperCase().trim(), customCourseName.trim() || undefined);
+      showToast(`Added ${customCourseCode.toUpperCase()}!`);
+    }
+
+    setIsEnrollModalOpen(false);
+    loadSemesters();
+  }
+
+  async function handleDeleteCourse(courseId: string, courseCode: string) {
+    if (!confirm(`Are you sure you want to remove ${courseCode} from this semester?`)) return;
+    await deleteCourse(courseId, currentSemester.id);
+    showToast(`Removed ${courseCode}`);
+    loadSemesters();
+  }
+
+  async function handleQuickToggleMastery(topicId: string, currentStatus: string, courseCode: string) {
+    const nextStatus = currentStatus === 'mastered' ? 'pending' : 'mastered';
+    await updateTopicStatus(topicId, nextStatus, currentSemester?.id, courseCode);
+    showToast(nextStatus === 'mastered' ? 'Topic marked as Mastered (100%)!' : 'Topic reset to pending');
+    loadSemesters();
+  }
+
+  function handleScheduleStudy(topic: DIUTopicItem, courseCode: string) {
+    createTopicStudyTaskLocally(topic, courseCode);
+    showToast(`Scheduled 90m revision session for "${topic.name}" in your planner!`);
+  }
+
+  if (!mounted) return null;
+
   return (
-    <>
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
       <Navbar />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Toast Alert Banner */}
-        {toastMessage && (
-          <div className={`fixed top-20 right-4 sm:right-6 z-50 px-4 py-3 rounded-2xl border shadow-xl flex items-center gap-2.5 text-xs font-bold animate-slide-up ${
-            toastMessage.type === 'alert' 
-              ? 'bg-rose-50 border-rose-200 text-rose-800' 
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}>
-            {toastMessage.type === 'alert' ? (
-              <Flame className="w-4 h-4 text-rose-600 shrink-0" />
-            ) : (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            )}
-            <span>{toastMessage.text}</span>
-          </div>
-        )}
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-950 text-white px-5 py-3 rounded-2xl shadow-2xl border border-emerald-500/30 flex items-center gap-3 animate-fade-in">
+          <Sparkles className="w-4 h-4 text-emerald-400" />
+          <span className="text-xs font-semibold">{toastMessage}</span>
+        </div>
+      )}
 
-        {/* Hero Welcome & Streak Banner */}
-        <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-850 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-white/10 relative overflow-hidden">
-          <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-1/3 -mb-12 w-48 h-48 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+      {/* Main Content Area */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-8">
+        
+        {/* Top University & Student Identity Header */}
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-950 via-slate-900 to-emerald-900 text-white p-6 sm:p-8 shadow-xl border border-emerald-500/20">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-10 -left-10 w-72 h-72 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
 
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-rose-400 text-xs font-extrabold tracking-wide">
-                <Flame className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse" />
-                <span>4-DAY MOMENTUM STREAK</span>
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-bold uppercase tracking-wider">
+                <GraduationCap className="w-4 h-4" />
+                Daffodil International University (DIU)
               </div>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-                {activeUser ? `Welcome back, ${activeUser.name.split(' ')[0]}` : 'Weekly Discipline & Task Engine'}
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
+                {activeUser?.name || 'DIU Student'}&apos;s Academic Prep Portal
               </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
-                Organizes messy to-dos into your verified free hours, prevents procrastination with harsh reminders, and syncs directly to Google Calendar.
+              <p className="text-slate-300 text-xs sm:text-sm max-w-2xl leading-relaxed">
+                Track semester courses, master previous years&apos; DIU exam questions, view topic priority ratings, and cover essential prerequisites for Midterm & Final exams.
               </p>
-            </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={handleAutoSchedule}
-                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 text-white px-4 py-2.5 rounded-2xl text-xs font-bold transition-all active:scale-95"
-                title="Fit pending tasks into your open free hours"
-              >
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>Auto-Fit into Free Time</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setEditingTask(null);
-                  setTaskForm({
-                    title: '',
-                    description: '',
-                    estimated_minutes: 60,
-                    priority: 'medium',
-                    status: 'pending'
-                  });
-                  setIsModalOpen(true);
-                }}
-                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shadow-lg shadow-rose-900/40 active:scale-95"
-              >
-                <Plus className="w-4 h-4" />
-                <span>New Task</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="mt-6 pt-5 border-t border-white/10 space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold">
-              <span className="text-slate-400 flex items-center gap-1.5">
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                Weekly Milestone Completion
-              </span>
-              <span className="text-white font-mono text-sm">{completionRate}% Completed</span>
-            </div>
-            <div className="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden p-0.5 border border-white/5">
-              <div 
-                className="bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-700 ease-out" 
-                style={{ width: `${completionRate}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Inline Task Bar */}
-        <form onSubmit={handleQuickAdd} className="glass-card rounded-2xl p-2.5 sm:p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shadow-sm">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              placeholder="What needs to get done? (Press Enter to quickly schedule...)"
-              value={quickTitle}
-              onChange={(e) => setQuickTitle(e.target.value)}
-              className="w-full pl-3.5 pr-2 py-2 text-xs sm:text-sm bg-transparent border-0 focus:outline-none text-slate-900 font-medium placeholder:text-slate-400"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
-            {/* Priority pills */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-              {(['low', 'medium', 'high'] as const).map((p) => (
+              {/* Semester Selector & Info Pills */}
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                {semesters.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => setActiveSemId(s.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      s.id === currentSemester?.id
+                        ? 'bg-emerald-500 text-white shadow-md ring-2 ring-white/20'
+                        : 'bg-white/10 text-slate-300 hover:bg-white/20'
+                    }`}
+                  >
+                    {s.title}
+                  </button>
+                ))}
                 <button
-                  key={p}
-                  type="button"
-                  onClick={() => setQuickPriority(p)}
-                  className={`px-2 py-1 rounded-lg text-[10px] font-extrabold capitalize transition-all ${
-                    quickPriority === p 
-                      ? p === 'high' ? 'bg-rose-600 text-white shadow-sm' : p === 'medium' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-white' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                  onClick={() => setIsNewSemModalOpen(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/15 text-white hover:bg-white/25 border border-white/10 transition-colors"
                 >
-                  {p}
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Semester</span>
                 </button>
-              ))}
+              </div>
             </div>
 
-            {/* Minutes selector */}
-            <select
-              value={quickMinutes}
-              onChange={(e) => setQuickMinutes(Number(e.target.value))}
-              className="bg-slate-100 text-slate-700 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border-0 focus:outline-none"
-            >
-              <option value={30}>30m</option>
-              <option value={45}>45m</option>
-              <option value={60}>1h</option>
-              <option value={90}>1.5h</option>
-              <option value={120}>2h</option>
-            </select>
-
-            <button
-              type="submit"
-              className="bg-slate-950 hover:bg-slate-800 text-white px-4 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-transform active:scale-95 shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </div>
-        </form>
-
-        {/* KPI Metric Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-          <div className="glass-card rounded-2xl p-4 space-y-1">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Commitments</span>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-black text-slate-950">{totalCount}</span>
-              <span className="text-xs text-slate-400 font-medium">All tasks</span>
+            {/* Quick Summary Pill Widget */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/15 min-w-[260px]">
+              <div>
+                <span className="text-[11px] uppercase font-bold text-emerald-300 block">Enrolled Courses</span>
+                <span className="text-2xl font-extrabold text-white">{totalCourses} Courses</span>
+                <span className="text-[10px] text-slate-300 block">{totalCredits.toFixed(1)} Total Credits</span>
+              </div>
+              <div>
+                <span className="text-[11px] uppercase font-bold text-teal-300 block">Current Term</span>
+                <span className="text-lg font-extrabold text-white">{currentSemester?.term || 'Spring 2025'}</span>
+                <span className="text-[10px] text-slate-300 block">Dept: {currentSemester?.department || 'CSE'}</span>
+              </div>
             </div>
           </div>
+        </section>
 
-          <div className="glass-card rounded-2xl p-4 space-y-1 border-emerald-200/80 bg-emerald-50/20">
-            <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              Completed
-            </span>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-black text-emerald-700">{completedCount}</span>
-              <span className="text-xs text-emerald-600 font-semibold">{completionRate}% Done</span>
+        {/* DIU Exam Timelines & Readiness Gauge Cards */}
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Midterm Readiness Card */}
+          <div className="glass-card rounded-2xl p-5 border border-slate-200/90 shadow-sm bg-white hover:border-emerald-500/40 transition-all">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-700">
+                    DIU Midterm Exam Scope (Weeks 1 - 7)
+                  </span>
+                </div>
+                <h2 className="text-xl font-black text-slate-900">Midterm Preparation Readiness</h2>
+                <p className="text-xs text-slate-500">
+                  Weightage: 25 Marks | Covers foundation modules, memory management, and primary algorithms
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-black text-emerald-600">{midReadinessPct}%</span>
+                <span className="block text-[10px] text-slate-400 font-bold uppercase">Mastery</span>
+              </div>
             </div>
-          </div>
 
-          <div className="glass-card rounded-2xl p-4 space-y-1 border-amber-200/80 bg-amber-50/20">
-            <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5 text-amber-600" />
-              In Progress / Pending
-            </span>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-black text-amber-800">{pendingCount + inProgressCount}</span>
-              <span className="text-xs text-amber-600 font-medium">{inProgressCount} Active</span>
+            <div className="mt-4 space-y-2">
+              <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
+                  style={{ width: `${midReadinessPct}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                <span>{masteredMidTopics} of {totalMidTopics} Midterm Topics Mastered</span>
+                <span>{totalMidTopics - masteredMidTopics} Topics Pending</span>
+              </div>
             </div>
           </div>
 
-          <div className="glass-card rounded-2xl p-4 space-y-1 border-rose-200/80 bg-rose-50/20">
-            <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
-              <Flame className="w-3.5 h-3.5 text-rose-600" />
-              High Priority Focus
-            </span>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-black text-rose-700">
-                {tasks.filter(t => t.priority === 'high' && t.status !== 'completed').length}
-              </span>
-              <span className="text-xs text-rose-600 font-semibold">Tough Love Active</span>
+          {/* Final Exam Readiness Card */}
+          <div className="glass-card rounded-2xl p-5 border border-slate-200/90 shadow-sm bg-white hover:border-blue-500/40 transition-all">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-blue-700">
+                    DIU Final Exam Scope (Weeks 8 - 14)
+                  </span>
+                </div>
+                <h2 className="text-xl font-black text-slate-900">Final Exam Preparation Readiness</h2>
+                <p className="text-xs text-slate-500">
+                  Weightage: 40 Marks | Advanced data structures, trees, graphs, dynamic programming, system design
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-black text-blue-600">{finalReadinessPct}%</span>
+                <span className="block text-[10px] text-slate-400 font-bold uppercase">Mastery</span>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500"
+                  style={{ width: `${finalReadinessPct}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+                <span>{masteredFinalTopics} of {totalFinalTopics} Final Topics Mastered</span>
+                <span>{totalFinalTopics - masteredFinalTopics} Topics Pending</span>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* View Switcher, Filter Tabs & Search Bar */}
-        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-          {/* Filter Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-            {[
-              { id: 'all', label: `All (${totalCount})` },
-              { id: 'today', label: `Today's Slots` },
-              { id: 'high', label: 'High Priority' },
-              { id: 'pending', label: 'To Do' },
-              { id: 'completed', label: 'Done' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all ${
-                  activeTab === tab.id 
-                    ? 'bg-slate-950 text-white shadow-sm' 
-                    : 'bg-white text-slate-600 hover:text-slate-950 hover:bg-slate-100 border border-slate-200/80'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {/* Quick Actions & Enrolled Courses Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+          <div>
+            <h2 className="text-xl font-black text-slate-950 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-emerald-700" />
+              Enrolled Courses for {currentSemester?.title || 'This Semester'}
+            </h2>
+            <p className="text-xs text-slate-500">
+              Select any course to view its Midterm & Final topic breakdown, question types, and prerequisite survival guides.
+            </p>
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Search Input */}
-            <div className="relative flex-1 sm:w-64">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search commitments..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-white border border-slate-200/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-800 placeholder:text-slate-400"
-              />
-            </div>
-
-            {/* List / Kanban View Switcher */}
-            <div className="flex items-center bg-white p-1 rounded-xl border border-slate-200/80 shrink-0">
-              <button
-                type="button"
-                onClick={() => setViewMode('list')}
-                className={`p-1.5 rounded-lg transition-all ${
-                  viewMode === 'list' 
-                    ? 'bg-slate-950 text-white shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-                title="List View"
-              >
-                <ListIcon className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('kanban')}
-                className={`p-1.5 rounded-lg transition-all ${
-                  viewMode === 'kanban' 
-                    ? 'bg-slate-950 text-white shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-                title="Kanban Board View"
-              >
-                <LayoutGrid className="w-4 h-4" />
-              </button>
-            </div>
+            <Link
+              href="/past-questions"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-300/80 hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <FileText className="w-4 h-4 text-emerald-600" />
+              <span>DIU Question Bank</span>
+            </Link>
+            <button
+              onClick={() => setIsEnrollModalOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 shadow-sm transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Enroll Courses</span>
+            </button>
           </div>
         </div>
 
-        {/* Task Content: List View OR Kanban Board */}
-        {loading ? (
-          <div className="glass-card rounded-2xl p-12 text-center text-slate-400 text-xs font-semibold">
-            Loading tasks...
-          </div>
-        ) : filteredTasks.length === 0 ? (
-          <div className="glass-card rounded-3xl p-12 text-center space-y-3 border-dashed border-2 border-slate-200">
-            <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-              <CheckCircle2 className="w-6 h-6" />
+        {/* Enrolled Courses Grid */}
+        {courses.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
+              <BookOpen className="w-8 h-8" />
             </div>
-            <h3 className="font-extrabold text-slate-950 text-base">No tasks found for this view</h3>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Use the quick add bar above or import a full structured study track in the Roadmap tab.
-            </p>
+            <div className="space-y-1 max-w-md mx-auto">
+              <h3 className="text-base font-bold text-slate-900">No Courses Enrolled Yet</h3>
+              <p className="text-xs text-slate-500">
+                Enroll in standard DIU semester course packages or add your enrolled courses to access topic recommendations and previous years&apos; questions.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsEnrollModalOpen(true)}
+              className="px-5 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow-md hover:bg-emerald-800 transition-colors"
+            >
+              + 1-Click Enroll DIU Semester Courses
+            </button>
           </div>
-        ) : viewMode === 'list' ? (
-          /* ==================== LIST VIEW ==================== */
-          <div className="space-y-3">
-            {filteredTasks.map((task) => {
-              const isDone = task.status === 'completed';
-              const isHigh = task.priority === 'high';
-              const isProgress = task.status === 'in_progress';
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {courses.map((course) => {
+              const midTopics = course.midterm_topics || [];
+              const finalTopics = course.final_topics || [];
+              const midDone = midTopics.filter(t => t.status === 'mastered').length;
+              const finalDone = finalTopics.filter(t => t.status === 'mastered').length;
+              const midPct = midTopics.length > 0 ? Math.round((midDone / midTopics.length) * 100) : 0;
+              const finalPct = finalTopics.length > 0 ? Math.round((finalDone / finalTopics.length) * 100) : 0;
+              const criticalCount = [...midTopics, ...finalTopics].filter(t => t.priority_stars >= 5).length;
 
               return (
-                <div
-                  key={task.id}
-                  className={`glass-card rounded-2xl p-4 sm:p-5 transition-all ${
-                    isDone 
-                      ? 'border-emerald-200/80 bg-emerald-50/20 opacity-80' 
-                      : isHigh 
-                      ? 'border-rose-200/60 hover:border-rose-300 shadow-glow-sm' 
-                      : 'border-slate-200/80'
-                  }`}
+                <div 
+                  key={course.id || course.code}
+                  className="glass-card rounded-2xl p-5 border border-slate-200 bg-white flex flex-col justify-between hover:border-emerald-500/50 hover:shadow-md transition-all group"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3.5 flex-1 min-w-0">
-                      {/* Checkbox */}
-                      <button
-                        onClick={() => handleToggleStatus(task.id, task.status)}
-                        className={`mt-0.5 w-6 h-6 rounded-xl flex items-center justify-center border transition-all shrink-0 ${
-                          isDone
-                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm'
-                            : 'border-slate-300 hover:border-slate-700 bg-white text-transparent'
-                        }`}
-                        title={isDone ? 'Mark as Pending' : 'Mark as Completed'}
-                      >
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </button>
-
-                      {/* Content */}
-                      <div className="space-y-1.5 min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className={`font-bold text-sm sm:text-base leading-snug break-words ${
-                            isDone ? 'line-through text-slate-400 font-normal' : 'text-slate-950'
-                          }`}>
-                            {task.title}
-                          </h3>
-
-                          {isProgress && (
-                            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                              In Progress
-                            </span>
-                          )}
-                        </div>
-
-                        {task.description && (
-                          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">
-                            {task.description}
-                          </p>
-                        )}
-
-                        {/* Badges */}
-                        <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-                          <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-lg font-semibold text-[11px]">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            {task.estimated_minutes} mins
+                  <div className="space-y-3">
+                    {/* Header */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-black uppercase tracking-wider">
+                            {course.code}
                           </span>
-
-                          <span className={`px-2.5 py-0.5 rounded-lg font-bold text-[11px] capitalize ${
-                            isHigh
-                              ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                              : task.priority === 'low'
-                              ? 'bg-slate-100 text-slate-600'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {task.priority} Priority
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {course.credits} Credits
                           </span>
-
-                          {task.google_calendar_event_id && (
-                            <a
-                              href={task.google_calendar_event_id}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-0.5 rounded-lg font-bold text-[11px] transition-colors"
-                              title="Open scheduled block in Google Calendar"
-                            >
-                              <Calendar className="w-3 h-3" />
-                              <span>Google Calendar</span>
-                              <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                            </a>
-                          )}
                         </div>
+                        <h3 className="font-extrabold text-slate-900 text-base leading-snug group-hover:text-emerald-800 transition-colors">
+                          {course.name}
+                        </h3>
                       </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
-                        onClick={() => openHarshAlertModal(task)}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-all hover:scale-105 active:scale-95"
-                        title="Tough love accountability reminder preview"
-                      >
-                        <Flame className="w-3.5 h-3.5 text-rose-600" />
-                        <span className="hidden sm:inline">Harsh Alert</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setEditingTask(task);
-                          setTaskForm({
-                            title: task.title,
-                            description: task.description || '',
-                            estimated_minutes: task.estimated_minutes || 60,
-                            priority: task.priority || 'medium',
-                            status: task.status || 'pending'
-                          });
-                          setIsModalOpen(true);
-                        }}
-                        className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
-                        title="Edit Task"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteTask(task.id)}
-                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
-                        title="Delete Task"
+                        onClick={() => handleDeleteCourse(course.id, course.code)}
+                        className="text-slate-300 hover:text-rose-500 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                        title="Remove course"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* ==================== KANBAN BOARD VIEW ==================== */
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(['pending', 'in_progress', 'completed'] as const).map((colStatus) => {
-              const colTasks = filteredTasks.filter(t => t.status === colStatus);
-              const colTitle = colStatus === 'pending' ? 'To Do' : colStatus === 'in_progress' ? 'In Progress' : 'Completed';
-              const colBadge = colStatus === 'pending' ? 'bg-slate-200 text-slate-800' : colStatus === 'in_progress' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800';
 
-              return (
-                <div key={colStatus} className="bg-slate-100/70 p-4 rounded-3xl border border-slate-200/80 space-y-3 flex flex-col min-h-[400px]">
-                  <div className="flex items-center justify-between px-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-black text-sm text-slate-900">{colTitle}</h4>
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${colBadge}`}>
-                        {colTasks.length}
+                    <p className="text-xs text-slate-500 line-clamp-2">
+                      {course.description || 'DIU Syllabus core modules, past exam questions, and preparation guides.'}
+                    </p>
+
+                    {/* Progress Bars */}
+                    <div className="space-y-2.5 pt-2">
+                      {/* Midterm Readiness */}
+                      <div>
+                        <div className="flex justify-between text-[11px] font-bold text-slate-600 mb-1">
+                          <span className="flex items-center gap-1 text-emerald-800">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            Midterm Prep
+                          </span>
+                          <span>{midPct}% ({midDone}/{midTopics.length})</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-emerald-500 rounded-full transition-all"
+                            style={{ width: `${midPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Final Readiness */}
+                      <div>
+                        <div className="flex justify-between text-[11px] font-bold text-slate-600 mb-1">
+                          <span className="flex items-center gap-1 text-blue-800">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                            Final Prep
+                          </span>
+                          <span>{finalPct}% ({finalDone}/{finalTopics.length})</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-blue-500 rounded-full transition-all"
+                            style={{ width: `${finalPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Badges */}
+                    <div className="flex flex-wrap gap-1.5 pt-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 text-[10px] font-bold border border-amber-200">
+                        <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                        {criticalCount} Critical Topics
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                        <FileText className="w-3 h-3 text-slate-500" />
+                        {course.past_questions?.length || 0} Past Questions
                       </span>
                     </div>
                   </div>
 
-                  <div className="space-y-2.5 flex-1">
-                    {colTasks.length === 0 ? (
-                      <div className="h-32 flex items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs font-semibold">
-                        No tasks
-                      </div>
-                    ) : (
-                      colTasks.map((task) => (
-                        <div
-                          key={task.id}
-                          className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200/80 space-y-2.5 hover:shadow-md transition-shadow"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <h5 className={`font-bold text-xs leading-snug break-words ${
-                              task.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-900'
-                            }`}>
-                              {task.title}
-                            </h5>
-
-                            <button
-                              onClick={() => openHarshAlertModal(task)}
-                              className="text-rose-500 hover:text-rose-700 p-1 shrink-0"
-                              title="Tough love alert"
-                            >
-                              <Flame className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-
-                          {task.description && (
-                            <p className="text-[11px] text-slate-500 line-clamp-2">
-                              {task.description}
-                            </p>
-                          )}
-
-                          <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
-                            <span className="font-semibold text-slate-500">
-                              {task.estimated_minutes}m • <span className="capitalize">{task.priority}</span>
-                            </span>
-
-                            {/* Status changer buttons */}
-                            <div className="flex items-center gap-1">
-                              {colStatus !== 'pending' && (
-                                <button
-                                  onClick={() => handleMoveStatus(task.id, 'pending')}
-                                  className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
-                                  title="Move to To Do"
-                                >
-                                  ←
-                                </button>
-                              )}
-                              {colStatus !== 'in_progress' && (
-                                <button
-                                  onClick={() => handleMoveStatus(task.id, 'in_progress')}
-                                  className="px-1.5 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold"
-                                  title="Move to In Progress"
-                                >
-                                  Active
-                                </button>
-                              )}
-                              {colStatus !== 'completed' && (
-                                <button
-                                  onClick={() => handleMoveStatus(task.id, 'completed')}
-                                  className="px-1.5 py-0.5 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold"
-                                  title="Mark as Done"
-                                >
-                                  ✓
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
+                  {/* Actions */}
+                  <div className="pt-5 mt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <Link
+                      href={`/course/${course.code}`}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow-sm transition-all text-center"
+                    >
+                      <span>Exam Prep & Topics</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
                   </div>
                 </div>
               );
             })}
           </div>
         )}
-      </div>
 
-      {/* Add / Edit Task Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-slide-up">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h2 className="text-lg font-black text-slate-950 tracking-tight">
-                {editingTask ? 'Edit Commitment' : 'Add New Task'}
-              </h2>
+        {/* Critical & Guaranteed Exam Topics Across Courses */}
+        {pendingCriticalTopics.length > 0 && (
+          <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-7 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-black uppercase tracking-wider">
+                    High Priority
+                  </span>
+                  <h3 className="text-lg font-black text-slate-900">
+                    DIU Guaranteed / Critical Topics Pending Review
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  These topics have appeared repeatedly in past DIU exams and carry 10–15 marks each.
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-500">
+                {pendingCriticalTopics.length} Critical Topics Remaining
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+              {pendingCriticalTopics.slice(0, 6).map(({ course, topic }) => (
+                <div 
+                  key={topic.id}
+                  className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 flex flex-col justify-between hover:bg-white hover:border-emerald-300 transition-all"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-slate-200 text-slate-800">
+                          {course.code}
+                        </span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          topic.exam_term === 'midterm' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {topic.exam_term.toUpperCase()}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-bold text-rose-600 flex items-center gap-0.5">
+                        <Flame className="w-3.5 h-3.5 fill-rose-500 text-rose-500" />
+                        {topic.marks_weightage}
+                      </span>
+                    </div>
+
+                    <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                      {topic.name}
+                    </h4>
+
+                    <p className="text-[11px] text-slate-500 line-clamp-2">
+                      {topic.description}
+                    </p>
+
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {topic.expected_question_types.map(type => (
+                        <span key={type} className="text-[9px] font-bold px-1.5 py-0.5 bg-white rounded border border-slate-200 text-slate-600">
+                          {type}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-4 mt-2 border-t border-slate-200/60">
+                    <button
+                      onClick={() => handleScheduleStudy(topic, course.code)}
+                      className="text-[11px] font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1"
+                    >
+                      <Clock className="w-3 h-3 text-emerald-600" />
+                      <span>Schedule 90m Study</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleQuickToggleMastery(topic.id, topic.status, course.code)}
+                      className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 hover:bg-emerald-200 transition-colors flex items-center gap-1"
+                    >
+                      <Check className="w-3 h-3" />
+                      <span>Mark Mastered</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+      </main>
+
+      {/* ==================== MODAL: ENROLL COURSES ==================== */}
+      {isEnrollModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Course Selection</span>
+                <h3 className="text-xl font-black text-slate-900">Enroll Courses in {currentSemester?.title}</h3>
+                <p className="text-xs text-slate-500">Choose a 1-click DIU semester package or enroll individual courses.</p>
+              </div>
               <button 
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"
+                onClick={() => setIsEnrollModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
               >
-                <X className="w-5 h-5" />
+                ✕
               </button>
             </div>
 
-            <form onSubmit={handleSaveModalTask} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">Task Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Master C pointers, Solve Codeforces 1500 DP"
-                  value={taskForm.title}
-                  onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
-                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
-                />
-              </div>
+            {/* Mode Tabs */}
+            <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-bold text-slate-600">
+              <button
+                type="button"
+                onClick={() => setEnrollType('preset')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  enrollType === 'preset' ? 'bg-white text-emerald-800 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                1-Click Semester Bundle
+              </button>
+              <button
+                type="button"
+                onClick={() => setEnrollType('catalog')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  enrollType === 'catalog' ? 'bg-white text-emerald-800 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                DIU Course Catalog
+              </button>
+              <button
+                type="button"
+                onClick={() => setEnrollType('custom')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  enrollType === 'custom' ? 'bg-white text-emerald-800 shadow-sm' : 'hover:text-slate-900'
+                }`}
+              >
+                Custom Course
+              </button>
+            </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">Description / Approach</label>
-                <textarea
-                  rows={3}
-                  placeholder="Notes, problem links, test specifications..."
-                  value={taskForm.description}
-                  onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
-                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Duration (Minutes)</label>
-                  <input
-                    type="number"
-                    min={10}
-                    step={5}
-                    value={taskForm.estimated_minutes}
-                    onChange={(e) => setTaskForm({ ...taskForm, estimated_minutes: Number(e.target.value) })}
-                    className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Priority</label>
-                  <select
-                    value={taskForm.priority}
-                    onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value as any })}
-                    className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
-                  >
-                    <option value="low">Low Priority</option>
-                    <option value="medium">Medium Priority</option>
-                    <option value="high">High (Tough Love)</option>
-                  </select>
-                </div>
-              </div>
-
-              {editingTask && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Status</label>
-                  <select
-                    value={taskForm.status}
-                    onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value as any })}
-                    className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-950 text-slate-900 font-medium"
-                  >
-                    <option value="pending">To Do (Pending)</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="completed">Completed (Done)</option>
-                  </select>
+            <form onSubmit={handleEnrollSubmit} className="space-y-4">
+              {enrollType === 'preset' && (
+                <div className="space-y-3">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Choose DIU Recommended Semester Bundle (CSE/SWE)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(DIU_SEMESTER_PRESETS[currentSemester?.department || 'CSE'] || []).map(p => (
+                      <button
+                        key={p.semester_number}
+                        type="button"
+                        onClick={() => setSelectedPresetSem(p.semester_number)}
+                        className={`p-3 rounded-xl border text-left transition-all ${
+                          selectedPresetSem === p.semester_number
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-950 font-bold ring-1 ring-emerald-600'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white'
+                        }`}
+                      >
+                        <span className="text-xs font-extrabold block">{p.title}</span>
+                        <span className="text-[10px] text-slate-500 block">{p.level_term}</span>
+                        <span className="text-[10px] text-emerald-700 block font-semibold mt-1">
+                          {p.recommended_courses.length} Core Courses
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              {enrollType === 'catalog' && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">Select Course from Catalog</label>
+                  <select
+                    value={selectedCatalogCourse}
+                    onChange={(e) => setSelectedCatalogCourse(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {Object.values(DIU_COURSE_CATALOG).map(c => (
+                      <option key={c.code} value={c.code}>
+                        {c.code} - {c.name} ({c.credits} Credits)
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-500">
+                    Includes all past question banks, topic priorities, and prerequisites guide.
+                  </p>
+                </div>
+              )}
+
+              {enrollType === 'custom' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block">Course Code (e.g. CSE323)</label>
+                    <input
+                      type="text"
+                      placeholder="CSE323"
+                      value={customCourseCode}
+                      onChange={(e) => setCustomCourseCode(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium uppercase"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block">Course Title</label>
+                    <input
+                      type="text"
+                      placeholder="Web Engineering"
+                      value={customCourseName}
+                      onChange={(e) => setCustomCourseName(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                  onClick={() => setIsEnrollModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 text-xs font-bold bg-slate-950 hover:bg-slate-850 text-white rounded-xl transition-all shadow-md active:scale-95"
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-700 text-white hover:bg-emerald-800 shadow-md"
                 >
-                  {editingTask ? 'Save Changes' : 'Create Task'}
+                  Enroll Now
                 </button>
               </div>
             </form>
@@ -896,95 +724,82 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Tough Love / Harsh Alert Preview Modal */}
-      {alertModalTask && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-slide-up">
-            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[11px] font-extrabold">
-                  <Flame className="w-3.5 h-3.5 text-rose-600 fill-rose-600" />
-                  Harsh Alert Test Engine
-                </div>
-                <h3 className="text-lg font-black text-slate-950">Tough Love Notification</h3>
+      {/* ==================== MODAL: CREATE SEMESTER ==================== */}
+      {isNewSemModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Academic Structure</span>
+                <h3 className="text-xl font-black text-slate-900">Add New Semester</h3>
+                <p className="text-xs text-slate-500">Configure semester details for your DIU student profile.</p>
               </div>
               <button 
-                onClick={() => setAlertModalTask(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"
+                onClick={() => setIsNewSemModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
               >
-                <X className="w-5 h-5" />
+                ✕
               </button>
             </div>
 
-            <div className="space-y-3">
-              <div className="text-xs text-slate-600">
-                Target Task: <strong className="text-slate-950">{alertModalTask.title}</strong>
+            <form onSubmit={handleCreateSemester} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block">Semester Name</label>
+                <input
+                  type="text"
+                  value={newSemTitle}
+                  onChange={(e) => setNewSemTitle(e.target.value)}
+                  placeholder="e.g. Semester 4 (Level 2 Term 2)"
+                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium"
+                  required
+                />
               </div>
 
-              {/* Tone switcher */}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700">Accountability Tone:</label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {(['harsh', 'roast', 'firm', 'gentle'] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => changeAlertTone(t)}
-                      className={`py-1.5 rounded-xl text-xs font-extrabold capitalize border transition-all ${
-                        alertTone === t
-                          ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block">Academic Term</label>
+                  <input
+                    type="text"
+                    value={newSemTerm}
+                    onChange={(e) => setNewSemTerm(e.target.value)}
+                    placeholder="Spring 2025"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block">Department</label>
+                  <select
+                    value={newSemDept}
+                    onChange={(e) => setNewSemDept(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium"
+                  >
+                    <option value="CSE">CSE</option>
+                    <option value="SWE">SWE</option>
+                    <option value="CIS">CIS</option>
+                    <option value="EEE">EEE</option>
+                  </select>
                 </div>
               </div>
 
-              {/* Email / WhatsApp Message Preview Box */}
-              <div className="bg-slate-950 text-white rounded-2xl p-4 space-y-2 border border-slate-800 shadow-inner">
-                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 pb-1 border-b border-slate-800">
-                  <span>DISPATCH CHANNELS: Email & WhatsApp</span>
-                  <span className="text-rose-400 font-bold">Severity: {alertTone.toUpperCase()}</span>
-                </div>
-                <div className="text-xs font-bold text-rose-300">
-                  {alertPreview?.subject || 'Loading subject...'}
-                </div>
-                <p className="text-xs text-slate-300 font-mono leading-relaxed whitespace-pre-wrap">
-                  {alertPreview?.body || 'Generating tough love accountability alert...'}
-                </p>
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNewSemModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-700 text-white hover:bg-emerald-800 shadow-md"
+                >
+                  Save Semester
+                </button>
               </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => {
-                  if (alertPreview) {
-                    navigator.clipboard.writeText(`${alertPreview.subject}\n\n${alertPreview.body}`);
-                    showToast('Copied alert to clipboard!');
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copy Text</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={alertSending}
-                onClick={sendHarshAlertNow}
-                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-900/30 active:scale-95 disabled:opacity-50"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{alertSending ? 'Dispatching...' : 'Dispatch Alert Now'}</span>
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

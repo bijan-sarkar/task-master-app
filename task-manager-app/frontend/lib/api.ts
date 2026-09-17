@@ -590,3 +590,261 @@ export function importRoadmapTasksToDashboard(roadmap: CustomRoadmap, phaseIndex
   saveLocalTasks(combined);
   return newTasks.length;
 }
+
+// ==================== DIU SEMESTER TRACKER API ====================
+import {
+  DIU_SEMESTER_PRESETS,
+  DIU_COURSE_CATALOG,
+  getLocalSemesters,
+  saveLocalSemesters,
+  getLocalAllPastQuestions,
+  saveLocalCustomQuestion,
+  UserSemesterRecord,
+  DIUCourseItem,
+  DIUTopicItem,
+  DIUPastQuestionItem
+} from './diuData';
+
+export {
+  getLocalSemesters,
+  saveLocalSemesters,
+  getLocalAllPastQuestions,
+  saveLocalCustomQuestion
+};
+
+export type {
+  UserSemesterRecord,
+  DIUCourseItem,
+  DIUTopicItem,
+  DIUPastQuestionItem
+};
+
+
+export async function fetchDIUPresets() {
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/presets`);
+    if (res.ok) return await res.json();
+  } catch (e) {}
+  return {
+    curriculum: DIU_SEMESTER_PRESETS,
+    course_catalog: DIU_COURSE_CATALOG
+  };
+}
+
+export async function fetchUserSemesters(userId?: string): Promise<UserSemesterRecord[]> {
+  const uid = userId || getActiveUserId();
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/semesters/${uid}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        saveLocalSemesters(data);
+        return data;
+      }
+    }
+  } catch (e) {}
+  return getLocalSemesters();
+}
+
+export async function createSemester(title: string, term: string = 'Spring 2025', department: string = 'CSE'): Promise<UserSemesterRecord> {
+  const uid = getActiveUserId();
+  const localList = getLocalSemesters();
+  
+  // Try backend first
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/semesters/${uid}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, term, department })
+    });
+    if (res.ok) {
+      const sem = await res.json();
+      const updated = [sem, ...localList.map(s => ({ ...s, is_active: 0 }))];
+      saveLocalSemesters(updated);
+      return sem;
+    }
+  } catch (e) {}
+
+  // Local fallback
+  const newSem: UserSemesterRecord = {
+    id: 'sem-' + Date.now(),
+    user_id: uid,
+    title,
+    term,
+    department,
+    is_active: 1,
+    created_at: new Date().toISOString(),
+    courses: []
+  };
+
+  const updated = [newSem, ...localList.map(s => ({ ...s, is_active: 0 }))];
+  saveLocalSemesters(updated);
+  return newSem;
+}
+
+export async function enrollCourse(semesterId: string, courseCode: string, customName?: string): Promise<DIUCourseItem> {
+  const catalogCourse = DIU_COURSE_CATALOG[courseCode];
+  const payload = {
+    code: courseCode,
+    name: customName || catalogCourse?.name || courseCode,
+    credits: catalogCourse?.credits || '3.0',
+    department: catalogCourse?.department || 'CSE',
+    description: catalogCourse?.description || '',
+    prerequisites_guide: catalogCourse?.prerequisites_guide || null
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/courses/enroll/${semesterId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      const course = await res.json();
+      // Update local storage representation
+      const sems = getLocalSemesters();
+      const sIdx = sems.findIndex(s => s.id === semesterId);
+      if (sIdx !== -1) {
+        sems[sIdx].courses = sems[sIdx].courses || [];
+        sems[sIdx].courses.push(course);
+        saveLocalSemesters(sems);
+      }
+      return course;
+    }
+  } catch (e) {}
+
+  // Fallback to local catalog insertion
+  const fallbackCourse: DIUCourseItem = catalogCourse ? JSON.parse(JSON.stringify(catalogCourse)) : {
+    id: 'course-' + Date.now(),
+    code: courseCode,
+    name: customName || courseCode,
+    credits: '3.0',
+    department: 'CSE',
+    description: '',
+    prerequisites_guide: { title: `${courseCode} Guide`, foundational_concepts: [], diu_a_plus_strategy: [], common_pitfalls: [], recommended_resources: [] },
+    midterm_topics: [],
+    final_topics: [],
+    past_questions: []
+  };
+
+  const sems = getLocalSemesters();
+  const sIdx = sems.findIndex(s => s.id === semesterId);
+  if (sIdx !== -1) {
+    sems[sIdx].courses = sems[sIdx].courses || [];
+    // prevent duplicates
+    if (!sems[sIdx].courses.some(c => c.code === courseCode)) {
+      sems[sIdx].courses.push(fallbackCourse);
+      saveLocalSemesters(sems);
+    }
+  }
+
+  return fallbackCourse;
+}
+
+export async function deleteCourse(courseId: string, semesterId: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/api/diu/courses/${courseId}`, { method: 'DELETE' });
+  } catch (e) {}
+
+  const sems = getLocalSemesters();
+  const sIdx = sems.findIndex(s => s.id === semesterId);
+  if (sIdx !== -1) {
+    sems[sIdx].courses = (sems[sIdx].courses || []).filter(c => c.id !== courseId && c.code !== courseId);
+    saveLocalSemesters(sems);
+  }
+}
+
+export async function updateTopicStatus(topicId: string, status: 'pending' | 'learning' | 'mastered', semesterId?: string, courseCode?: string) {
+  try {
+    await fetch(`${API_BASE}/api/diu/topics/${topicId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+  } catch (e) {}
+
+  // Update in local storage
+  const sems = getLocalSemesters();
+  sems.forEach(sem => {
+    (sem.courses || []).forEach(course => {
+      if (!courseCode || course.code === courseCode) {
+        course.midterm_topics?.forEach(t => {
+          if (t.id === topicId) t.status = status;
+        });
+        course.final_topics?.forEach(t => {
+          if (t.id === topicId) t.status = status;
+        });
+      }
+    });
+  });
+  saveLocalSemesters(sems);
+}
+
+export async function queryPastQuestions(courseCode?: string, term?: string, questionType?: string, session?: string): Promise<DIUPastQuestionItem[]> {
+  const params = new URLSearchParams();
+  if (courseCode && courseCode !== 'ALL') params.append('course_code', courseCode);
+  if (term && term !== 'ALL') params.append('exam_term', term.toLowerCase());
+  if (questionType && questionType !== 'ALL') params.append('question_type', questionType.toLowerCase());
+  if (session && session !== 'ALL') params.append('exam_session', session);
+
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/questions?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) return data;
+    }
+  } catch (e) {}
+
+  // Fallback to local questions
+  const allQs = getLocalAllPastQuestions();
+  return allQs.filter(q => {
+    if (courseCode && courseCode !== 'ALL' && q.course_code !== courseCode) return false;
+    if (term && term !== 'ALL' && q.exam_term.toLowerCase() !== term.toLowerCase()) return false;
+    if (questionType && questionType !== 'ALL' && q.question_type.toLowerCase() !== questionType.toLowerCase()) return false;
+    if (session && session !== 'ALL' && q.exam_session !== session) return false;
+    return true;
+  });
+}
+
+export async function addPastQuestion(question: Omit<DIUPastQuestionItem, 'id'>): Promise<DIUPastQuestionItem> {
+  const newQ: DIUPastQuestionItem = {
+    ...question,
+    id: 'q-custom-' + Date.now()
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/api/diu/questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(question)
+    });
+    if (res.ok) {
+      const saved = await res.json();
+      saveLocalCustomQuestion(saved);
+      return saved;
+    }
+  } catch (e) {}
+
+  saveLocalCustomQuestion(newQ);
+  return newQ;
+}
+
+export function createTopicStudyTaskLocally(topic: DIUTopicItem, courseCode: string): TaskItem {
+  const existing = getLocalTasks();
+  const taskTitle = `[${courseCode} ${topic.exam_term.toUpperCase()}] Revise: ${topic.name}`;
+  const typesText = topic.expected_question_types.join(', ');
+  
+  const newTask: TaskItem = {
+    id: 'task-topic-' + Date.now(),
+    title: taskTitle,
+    description: `Priority: ${topic.priority_label} (${topic.priority_stars}★) | Marks: ${topic.marks_weightage} | Expected Question Types: ${typesText}`,
+    estimated_minutes: 90,
+    priority: topic.priority_stars >= 4 ? 'high' : 'medium',
+    status: 'pending',
+    created_at: new Date().toISOString()
+  };
+
+  saveLocalTasks([newTask, ...existing]);
+  return newTask;
+}
+
